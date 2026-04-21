@@ -7,10 +7,9 @@ if "claude_client" not in st.session_state:
 
 client: Anthropic = st.session_state.claude_client
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-
+# constants
 MODEL = "claude-opus-4-5"
-MAX_TOKENS = 1024
+MAX_TOKENS = 4096
 TOKEN_BUFFER = 2000
 SUMMARY_AFTER = 15   # exchanges before auto-summary
 
