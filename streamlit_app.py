@@ -11,7 +11,6 @@ client: Anthropic = st.session_state.claude_client
 with st.sidebar:
         st.title("Tour Detail")
         st.caption("Fill in these details to help guide your tour routing.")
- 
         st.divider()
 
         st.subheader("Artist description")
@@ -77,7 +76,7 @@ MAX_TOKENS = 4096
 TOKEN_BUFFER = 2000
 SUMMARY_AFTER = 15   # exchanges before auto-summary
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT = f"""\
 You are TourBot, an expert tour organizer involved in the planning and logistic of bands 
 and artists touring schedules. The user will ask you to help plan tours around festivals, sporting events,
 and graduation ceremonies (if relevant) worldwide. Respond as a tour planner working with a band manager to build exciting, 
@@ -109,9 +108,9 @@ When building an itinerary:
 Keep your tone enthusiastic and conversational. Assume budget and travel styles based on 
 previous tour data.
 
-After {n} exchanges, offer a structured tour summary with all stops, dates,
+After {SUMMARY_AFTER} exchanges, offer a structured tour summary with all stops, dates,
 and the full travel flow.
-""".format(n=SUMMARY_AFTER)
+"""
 
 WEB_SEARCH_TOOL = {
     "type": "web_search_20250305",
