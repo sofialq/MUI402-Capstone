@@ -1,13 +1,13 @@
 import streamlit as st
 from anthropic import Anthropic
 
-# ── Client ─────────────────────────────────────────────────────────────────────
+# client
 if "claude_client" not in st.session_state:
     st.session_state.claude_client = Anthropic(api_key=st.secrets["CLAUDE_API_KEY"])
 
 client: Anthropic = st.session_state.claude_client
 
-# ── Constants ──────────────────────────────────────────────────────────────────
+# constants
 MODEL = "claude-opus-4-5"
 MAX_TOKENS = 4096
 TOKEN_BUFFER = 2000
@@ -27,6 +27,9 @@ You have access to a web_search tool. Look up the listed information and use it 
 - Sporting event schedules, venues, and location details
 - Tour routing between multiple events
 - Graduation dates for surrounding cities, if band has a college-based fanbase; avoid these dates
+
+When choosing cities, consider where the artist's fanbase is strongest and where they have the most demand. Also consider if travel
+is possible for fans who's cities aren't hosting an event, but are nearby a city that is.
 
 Do not send artist to a festival or event that doesn't fit their genre or fanbase. 
 Prioritise events that are a strong match, and flag any scheduling conflicts or logistical issues with proposed itineraries.
@@ -55,18 +58,7 @@ WEB_SEARCH_TOOL = {
     "name": "web_search",
 }
 
-EVENT_CHIPS = [
-    ("🎪", "Coachella 2026",       "festival"),
-    ("🏀", "NBA Playoffs 2026",    "sport"),
-    ("🎸", "Glastonbury 2026",     "festival"),
-    ("🏎️", "Formula 1 Monaco GP",  "sport"),
-    ("🔥", "Burning Man 2026",     "festival"),
-    ("🎾", "Wimbledon 2026",       "sport"),
-    ("🎵", "Lollapalooza 2026",    "festival"),
-    ("⚽", "World Cup 2026",       "sport"),
-]
-
-# ── Session state ──────────────────────────────────────────────────────────────
+# initialise session state
 if "history" not in st.session_state:
     st.session_state.history = []          # list[dict] – raw API messages
 if "display" not in st.session_state:
@@ -76,7 +68,7 @@ if "exchanges" not in st.session_state:
 if "summary" not in st.session_state:
     st.session_state.summary = ""
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# helper functions
 def token_trimmed_history(history: list, max_words: int = TOKEN_BUFFER) -> list:
     """Keep as many recent messages as fit within the word budget."""
     kept, budget = [], max_words
@@ -106,7 +98,6 @@ def extract_text(content) -> str:
 
 def call_claude(user_text: str) -> str:
     """Send the conversation to Claude (with web search) and return the reply."""
-    # Add user message in correct format
     st.session_state.history.append({
         "role": "user",
         "content": [{"type": "text", "text": user_text}],
@@ -155,7 +146,7 @@ def generate_summary() -> str:
     )
     return extract_text(result.content)
 
-# ── UI setup ───────────────────────────────────────────────────────────────────
+# user interface
 st.set_page_config(page_title="TourBot", page_icon="🗺️", layout="centered")
 
 st.markdown("""
@@ -172,41 +163,19 @@ st.markdown("""
 st.title("🗺️ TourBot")
 st.caption("Plan tours around festivals & sporting events · powered by Claude + web search")
 
-# ── Event chips (sidebar) ──────────────────────────────────────────────────────
-st.sidebar.header("Quick-start events")
-st.sidebar.caption("Click an event to ask TourBot about it.")
-for icon, name, kind in EVENT_CHIPS:
-    if st.sidebar.button(f"{icon} {name}", key=f"chip_{name}"):
-        prompt = f"Tell me about {name} and help me plan a tour around it."
-        st.session_state.display.append({"role": "user", "text": prompt})
-        with st.spinner("Searching the web…"):
-            reply = call_claude(prompt)
-        st.session_state.display.append({"role": "assistant", "text": reply})
-        st.rerun()
-
-st.sidebar.divider()
-if st.sidebar.button("🗑️ Clear conversation"):
-    for key in ["history", "display", "exchanges", "summary"]:
-        if key in st.session_state:
-            del st.session_state[key]
-    st.rerun()
-
-# ── Chat history ───────────────────────────────────────────────────────────────
+# chat history display 
 if not st.session_state.display:
     with st.chat_message("assistant"):
         st.markdown(
-            "Hi! I'm **TourBot** — your personal tour organizer for festivals and "
-            "sporting events.\n\n"
-            "Tell me what part of the world you'd like to explore, or pick an event "
-            "from the sidebar to get started. I'll search for current lineups, "
-            "schedules, and build you a full multi-stop tour itinerary. 🎉"
+            "Hi! I'm **TourBot** — your personal tour organizer for your artist's concerts.\n\n"
+            "Tell me more about your artist and what your goals are with this tour, and I can help you plan an exciting itinerary that hits the best events for your fanbase!"
         )
 else:
     for msg in st.session_state.display:
         with st.chat_message(msg["role"]):
             st.markdown(msg["text"])
 
-# ── Sidebar inputs (tour details) ──────────────────────────────────────────────
+# sidebar inputs- tour details
 with st.sidebar:
     st.title("Tour Detail")
     st.caption("Fill in these details to help guide your tour routing.")
@@ -270,9 +239,9 @@ with st.sidebar:
         height=100,
     )
 
-# ── Main CTA: create tour plan ────────────────────────────────────────────────
+# create tour plan 
 if st.button("Create my tour plan."):
-    prompt = (
+    prompt = ( {SYSTEM_PROMPT} +
         f"Your artist is {artist or 'the artist'} and their music is best described as "
         f"{artist_genre or 'their genre'}. The target fanbase is {fanbase or 'their fans'}.\n"
         f"The tour should focus on {region}"
@@ -293,7 +262,7 @@ if st.button("Create my tour plan."):
 
     st.session_state.display.append({"role": "assistant", "text": reply})
 
-    # ── Auto-summary every SUMMARY_AFTER exchanges ─────────────────────────────
+    # auto-summary after a set number of exchanges to keep conversation manageable and give user a checkpoint
     if st.session_state.exchanges > 0 and st.session_state.exchanges % SUMMARY_AFTER == 0:
         with st.chat_message("assistant"):
             with st.spinner("Generating conversation summary…"):
@@ -303,7 +272,7 @@ if st.button("Create my tour plan."):
             st.markdown(summary_msg)
             st.session_state.display.append({"role": "assistant", "text": summary_msg})
 
-            # Compress history to summary only (as a message)
+            # compress history to summary only (as a message)
             st.session_state.history = [
                 {
                     "role": "assistant",
