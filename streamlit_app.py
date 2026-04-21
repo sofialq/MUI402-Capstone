@@ -6,69 +6,6 @@ if "claude_client" not in st.session_state:
     st.session_state.claude_client = Anthropic(api_key=st.secrets["CLAUDE_API_KEY"])
 
 client: Anthropic = st.session_state.claude_client
-
-# sidebar inputs
-with st.sidebar:
-        st.title("Tour Detail")
-        st.caption("Fill in these details to help guide your tour routing.")
-        st.divider()
-
-        st.subheader("Artist description")
-        artist = st.text_input("Artist/band name:")
-        artist_genre = st.text_input("Genre:")
- 
-        st.subheader("Timeframe:")
-        timeframe_options = [
-            "Summer 2026 (Jun–Aug)",
-            "Fall 2026 (Sep–Nov)",
-            "Winter 2026 (Dec–Feb)",
-            "Spring 2027 (Mar–May)",
-            "Custom range",
-            "no preference",
-        ]
-        timeframe = st.selectbox("When are you looking to tour?", timeframe_options)
-        if timeframe == "Custom range":
-            col1, col2 = st.columns(2)
-            with col1:
-                start_month = st.date_input("Start date")
-            with col2:
-                end_month = st.date_input("End date")
- 
-        st.divider()
-
-        st.subheader("Region")
-        region = st.radio(
-            "Where are we focusing?",
-            options=[
-                "US only",
-                "Europe",
-                "Mix of international destinations",
-                "Specific countries or regions",
-            ],
-        )
-        if region == "Specific countries or regions":
-            specific_regions = st.text_input(
-                "List countries or regions",
-                placeholder="e.g., UK, Germany, Australia",
-            )
- 
-        st.divider()
-
-        st.subheader("Targeted Fanbase")
-        fanbase = st.text_area(
-            "Describe your core audience",
-            placeholder="e.g., college-age listeners 18–28",
-            height=100,
-        )
- 
-        st.divider()
-
-        st.subheader("Must-Hit Cities or Events")
-        must_hit = st.text_area(
-            "Places your artist has always wanted to play, or markets with the strongest fanbase",
-            placeholder="e.g., Austin TX, Nashville TN, Glastonbury UK...",
-            height=100,
-        )
  
 # constants
 MODEL = "claude-opus-4-5"
@@ -82,15 +19,12 @@ and artists touring schedules. The user will ask you to help plan tours around f
 and graduation ceremonies (if relevant) worldwide. Respond as a tour planner working with a band manager to build exciting, 
 efficient itineraries that hit the best events for the band's fanbase.
 
-Your artist is {artist} and their music is best described as {artist_genre}. The target fanbase is {fanbase}. 
-The tour should focus on {region} during {timeframe}. Make sure to include any must-hit cities or events: {must_hit}.
-Use the web_search tool to find up-to-date information on events, lineups, and schedules. As well as finding more information on the artist's background.
-
 You have access to a web_search tool. Use it freely to look up:
+- More information about the artist, their genre, and fanbase
 - Current festival lineups, dates, and locations
 - Sporting event schedules, venues, and location details
 - Tour routing between multiple events
-- Graduation dates for surrounding cities if band has a college-based fanbase
+- Graduation dates for surrounding cities, if band has a college-based fanbase avoid these dates
 Use this information to avoid scheduling conflicts, find must-hit events, and build a compelling tour narrative.
 
 For every event you mention, include:
@@ -256,8 +190,75 @@ else:
         with st.chat_message(msg["role"]):
             st.markdown(msg["text"])
 
-# ── Chat input ─────────────────────────────────────────────────────────────────
-if user_input := st.chat_input("Ask about festivals, events, tours…"):
+# sidebar inputs
+with st.sidebar:
+        st.title("Tour Detail")
+        st.caption("Fill in these details to help guide your tour routing.")
+        st.divider()
+
+        st.subheader("Artist description")
+        artist = st.text_input("Artist/band name:")
+        artist_genre = st.text_input("Genre:")
+ 
+        st.subheader("Timeframe:")
+        timeframe_options = [
+            "Summer 2026 (Jun–Aug)",
+            "Fall 2026 (Sep–Nov)",
+            "Winter 2026 (Dec–Feb)",
+            "Spring 2027 (Mar–May)",
+            "Custom range",
+            "no preference",
+        ]
+        timeframe = st.selectbox("When are you looking to tour?", timeframe_options)
+        if timeframe == "Custom range":
+            col1, col2 = st.columns(2)
+            with col1:
+                start_month = st.date_input("Start date")
+            with col2:
+                end_month = st.date_input("End date")
+
+        st.subheader("Tour Length:")
+        tour_length = st.slider(
+            "How many cities/stops are you looking to include?",
+            min_value=1, max_value=30, value=10, step=1
+        )
+
+        st.subheader("Region")
+        region = st.radio(
+            "Where are we focusing?",
+            options=[
+                "US only",
+                "Europe",
+                "Mix of international destinations",
+                "Specific countries or regions",
+            ],
+        )
+        if region == "Specific countries or regions":
+            specific_regions = st.text_input(
+                "List countries or regions",
+                placeholder="e.g., UK, Germany, Australia",
+            )
+
+        st.subheader("Targeted Fanbase")
+        fanbase = st.text_area(
+            "Describe your core audience",
+            placeholder="e.g., college-age listeners 18–28",
+            height=100,
+        )
+
+        st.subheader("Must-Hit Cities or Events")
+        must_hit = st.text_area(
+            "Places your artist has always wanted to play, or markets with the strongest fanbase",
+            placeholder="e.g., Austin TX, Nashville TN, Glastonbury UK...",
+            height=100,
+        )
+
+# chat input
+user_input = f"""Your artist is {artist} and their music is best described as {artist_genre}. The target fanbase is {fanbase}.
+The tour should focus on {region} during {timeframe}. Make sure to include any must-hit cities or events: {must_hit}.
+The tour should be around {tour_length} stops long. Can you help me plan an exciting tour itinerary based on this information?"""
+
+if user_input := st.button("Create my tour plan."):
     st.session_state.display.append({"role": "user", "text": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
