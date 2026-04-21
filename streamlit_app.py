@@ -1,8 +1,7 @@
 import streamlit as st
 from anthropic import Anthropic
 
-# ── Client ────────────────────────────────────────────────────────────────────
-
+# create client
 if "claude_client" not in st.session_state:
     st.session_state.claude_client = Anthropic(api_key=st.secrets["CLAUDE_API_KEY"])
 
@@ -16,13 +15,14 @@ TOKEN_BUFFER = 2000
 SUMMARY_AFTER = 6   # exchanges before auto-summary
 
 SYSTEM_PROMPT = """\
-You are TourBot, an expert tour organizer who helps people plan trips around
-festivals and sporting events worldwide.
+You are TourBot, an expert tour organizer involved in the planning and logistic of bands 
+and artists touring schedules. 
 
 You have access to a web_search tool. Use it freely to look up:
 - Current festival lineups, dates, and locations
-- Sporting event schedules, venues, and ticket availability
+- Sporting event schedules, venues, and location details
 - Tour routing between multiple events
+- Graduation dates for surrounding cities if band has a college-based fanbase
 
 For every event you mention, include:
   • Event name and type (festival / sport / music)
@@ -36,8 +36,8 @@ When building an itinerary:
   - Flag scheduling conflicts
   - Give rough travel times between stops
 
-Keep your tone enthusiastic and conversational. Ask clarifying questions to
-refine the tour (budget, preferred genres, travel style, departure city).
+Keep your tone enthusiastic and conversational. Assume budget and travel styles based on 
+previous tour data.
 
 After {n} exchanges, offer a structured tour summary with all stops, dates,
 and the full travel flow.
