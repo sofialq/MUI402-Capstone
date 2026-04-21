@@ -1,30 +1,32 @@
 import streamlit as st
 from anthropic import Anthropic
 
-# create client
+# ── Client ─────────────────────────────────────────────────────────────────────
 if "claude_client" not in st.session_state:
     st.session_state.claude_client = Anthropic(api_key=st.secrets["CLAUDE_API_KEY"])
 
 client: Anthropic = st.session_state.claude_client
- 
-# constants
+
+# ── Constants ──────────────────────────────────────────────────────────────────
 MODEL = "claude-opus-4-5"
 MAX_TOKENS = 4096
 TOKEN_BUFFER = 2000
 SUMMARY_AFTER = 15   # exchanges before auto-summary
 
 SYSTEM_PROMPT = f"""\
-You are TourBot, an expert tour organizer involved in the planning and logistic of bands 
-and artists touring schedules. The user will ask you to help plan tours around festivals, sporting events,
+You are TourBot, an expert tour organizer involved in the planning and logistics of bands 
+and artists' touring schedules. The user will ask you to help plan tours around festivals, sporting events,
 and graduation ceremonies (if relevant) worldwide. Respond as a tour planner working with a band manager to build exciting, 
 efficient itineraries that hit the best events for the band's fanbase.
 
+Use the web_search tool to find up-to-date information on events, lineups, and schedules, as well as more information on the artist's background.
+
 You have access to a web_search tool. Use it freely to look up:
-- More information about the artist, their genre, and fanbase
+- The artist, their genre, and fanbase
 - Current festival lineups, dates, and locations
 - Sporting event schedules, venues, and location details
 - Tour routing between multiple events
-- Graduation dates for surrounding cities, if band has a college-based fanbase avoid these dates
+- Graduation dates for surrounding cities, if band has a college-based fanbase; avoid these dates
 Use this information to avoid scheduling conflicts, find must-hit events, and build a compelling tour narrative.
 
 For every event you mention, include:
@@ -62,7 +64,7 @@ EVENT_CHIPS = [
     ("⚽", "World Cup 2026",       "sport"),
 ]
 
-# initialize session state
+# ── Session state ──────────────────────────────────────────────────────────────
 if "history" not in st.session_state:
     st.session_state.history = []          # list[dict] – raw API messages
 if "display" not in st.session_state:
@@ -72,13 +74,14 @@ if "exchanges" not in st.session_state:
 if "summary" not in st.session_state:
     st.session_state.summary = ""
 
-# helpers 
+# ── Helpers ────────────────────────────────────────────────────────────────────
 def token_trimmed_history(history: list, max_words: int = TOKEN_BUFFER) -> list:
     """Keep as many recent messages as fit within the word budget."""
     kept, budget = [], max_words
     for msg in reversed(history):
         content = msg["content"]
-        words = len(content if isinstance(content, str) else str(content))
+        # content is usually a list of blocks; approximate length via str()
+        words = len(str(content))
         if budget - words < 0:
             break
         kept.insert(0, msg)
@@ -101,7 +104,11 @@ def extract_text(content) -> str:
 
 def call_claude(user_text: str) -> str:
     """Send the conversation to Claude (with web search) and return the reply."""
-    st.session_state.history.append({"role": "user", "content": user_text})
+    # Add user message in correct format
+    st.session_state.history.append({
+        "role": "user",
+        "content": [{"type": "text", "text": user_text}],
+    })
 
     trimmed = token_trimmed_history(st.session_state.history)
 
@@ -135,12 +142,18 @@ def generate_summary() -> str:
     result = client.messages.create(
         model=MODEL,
         max_tokens=400,
-        system="Summarise the following tour-planning conversation in 4–5 sentences, highlighting events discussed, destinations, and any itinerary agreed.",
-        messages=[{"role": "user", "content": convo}],
+        system=(
+            "Summarise the following tour-planning conversation in 4–5 sentences, "
+            "highlighting events discussed, destinations, and any itinerary agreed."
+        ),
+        messages=[{
+            "role": "user",
+            "content": [{"type": "text", "text": convo}],
+        }],
     )
     return extract_text(result.content)
 
-# user interface
+# ── UI setup ───────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="TourBot", page_icon="🗺️", layout="centered")
 
 st.markdown("""
@@ -172,7 +185,8 @@ for icon, name, kind in EVENT_CHIPS:
 st.sidebar.divider()
 if st.sidebar.button("🗑️ Clear conversation"):
     for key in ["history", "display", "exchanges", "summary"]:
-        del st.session_state[key]
+        if key in st.session_state:
+            del st.session_state[key]
     st.rerun()
 
 # ── Chat history ───────────────────────────────────────────────────────────────
@@ -190,82 +204,89 @@ else:
         with st.chat_message(msg["role"]):
             st.markdown(msg["text"])
 
-# sidebar inputs
+# ── Sidebar inputs (tour details) ──────────────────────────────────────────────
 with st.sidebar:
-        st.title("Tour Detail")
-        st.caption("Fill in these details to help guide your tour routing.")
-        st.divider()
+    st.title("Tour Detail")
+    st.caption("Fill in these details to help guide your tour routing.")
+    st.divider()
 
-        st.subheader("Artist description")
-        artist = st.text_input("Artist/band name:")
-        artist_genre = st.text_input("Genre:")
- 
-        st.subheader("Timeframe:")
-        timeframe_options = [
-            "Summer 2026 (Jun–Aug)",
-            "Fall 2026 (Sep–Nov)",
-            "Winter 2026 (Dec–Feb)",
-            "Spring 2027 (Mar–May)",
-            "Custom range",
-            "no preference",
-        ]
-        timeframe = st.selectbox("When are you looking to tour?", timeframe_options)
-        if timeframe == "Custom range":
-            col1, col2 = st.columns(2)
-            with col1:
-                start_month = st.date_input("Start date")
-            with col2:
-                end_month = st.date_input("End date")
+    st.subheader("Artist description")
+    artist = st.text_input("Artist/band name:")
+    artist_genre = st.text_input("Genre:")
 
-        st.subheader("Tour Length:")
-        tour_length = st.slider(
-            "How many cities/stops are you looking to include?",
-            min_value=1, max_value=30, value=10, step=1
+    st.subheader("Timeframe:")
+    timeframe_options = [
+        "Summer 2026 (Jun–Aug)",
+        "Fall 2026 (Sep–Nov)",
+        "Winter 2026 (Dec–Feb)",
+        "Spring 2027 (Mar–May)",
+        "Custom range",
+        "no preference",
+    ]
+    timeframe = st.selectbox("When are you looking to tour?", timeframe_options)
+    if timeframe == "Custom range":
+        col1, col2 = st.columns(2)
+        with col1:
+            start_month = st.date_input("Start date")
+        with col2:
+            end_month = st.date_input("End date")
+
+    st.subheader("Tour Length:")
+    tour_length = st.slider(
+        "How many cities/stops are you looking to include?",
+        min_value=1, max_value=30, value=10, step=1
+    )
+
+    st.subheader("Region")
+    region = st.radio(
+        "Where are we focusing?",
+        options=[
+            "US only",
+            "Europe",
+            "Mix of international destinations",
+            "Specific countries or regions",
+        ],
+    )
+    specific_regions = ""
+    if region == "Specific countries or regions":
+        specific_regions = st.text_input(
+            "List countries or regions",
+            placeholder="e.g., UK, Germany, Australia",
         )
 
-        st.subheader("Region")
-        region = st.radio(
-            "Where are we focusing?",
-            options=[
-                "US only",
-                "Europe",
-                "Mix of international destinations",
-                "Specific countries or regions",
-            ],
-        )
-        if region == "Specific countries or regions":
-            specific_regions = st.text_input(
-                "List countries or regions",
-                placeholder="e.g., UK, Germany, Australia",
-            )
+    st.subheader("Targeted Fanbase")
+    fanbase = st.text_area(
+        "Describe your core audience",
+        placeholder="e.g., college-age listeners 18–28",
+        height=100,
+    )
 
-        st.subheader("Targeted Fanbase")
-        fanbase = st.text_area(
-            "Describe your core audience",
-            placeholder="e.g., college-age listeners 18–28",
-            height=100,
-        )
+    st.subheader("Must-Hit Cities or Events")
+    must_hit = st.text_area(
+        "Places your artist has always wanted to play, or markets with the strongest fanbase",
+        placeholder="e.g., Austin TX, Nashville TN, Glastonbury UK...",
+        height=100,
+    )
 
-        st.subheader("Must-Hit Cities or Events")
-        must_hit = st.text_area(
-            "Places your artist has always wanted to play, or markets with the strongest fanbase",
-            placeholder="e.g., Austin TX, Nashville TN, Glastonbury UK...",
-            height=100,
-        )
+# ── Main CTA: create tour plan ────────────────────────────────────────────────
+if st.button("Create my tour plan."):
+    prompt = (
+        f"Your artist is {artist or 'the artist'} and their music is best described as "
+        f"{artist_genre or 'their genre'}. The target fanbase is {fanbase or 'their fans'}.\n"
+        f"The tour should focus on {region}"
+        f"{' (' + specific_regions + ')' if specific_regions else ''} during {timeframe}.\n"
+        f"Make sure to include any must-hit cities or events: {must_hit or 'none specified'}.\n"
+        f"The tour should be around {tour_length} stops long. "
+        f"Can you help me plan an exciting tour itinerary based on this information?"
+    )
 
-# chat input
-user_input = f"""Your artist is {artist} and their music is best described as {artist_genre}. The target fanbase is {fanbase}.
-The tour should focus on {region} during {timeframe}. Make sure to include any must-hit cities or events: {must_hit}.
-The tour should be around {tour_length} stops long. Can you help me plan an exciting tour itinerary based on this information?"""
-
-if user_input := st.button("Create my tour plan."):
-    st.session_state.display.append({"role": "user", "text": user_input})
+    st.session_state.display.append({"role": "user", "text": prompt})
     with st.chat_message("user"):
-        st.markdown(user_input)
+        st.markdown(prompt)
 
     with st.chat_message("assistant"):
         with st.spinner("Searching the web…"):
-            reply = call_claude(user_input)
+            reply = call_claude(prompt)
         st.markdown(reply)
 
     st.session_state.display.append({"role": "assistant", "text": reply})
@@ -280,7 +301,12 @@ if user_input := st.button("Create my tour plan."):
             st.markdown(summary_msg)
             st.session_state.display.append({"role": "assistant", "text": summary_msg})
 
-            # Compress history to summary + recent turn only
+            # Compress history to summary only (as a message)
             st.session_state.history = [
-                {"role": "assistant", "content": f"Summary so far:\n{summary_text}"}
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": f"Summary so far:\n{summary_text}"}],
+                }
+            ]
+
             ]
