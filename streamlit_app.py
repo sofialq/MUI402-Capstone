@@ -129,8 +129,7 @@ EVENT_CHIPS = [
     ("⚽", "World Cup 2026",       "sport"),
 ]
 
-# ── Session state ─────────────────────────────────────────────────────────────
-
+# initialize session state
 if "history" not in st.session_state:
     st.session_state.history = []          # list[dict] – raw API messages
 if "display" not in st.session_state:
@@ -140,8 +139,7 @@ if "exchanges" not in st.session_state:
 if "summary" not in st.session_state:
     st.session_state.summary = ""
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
+# helpers 
 def token_trimmed_history(history: list, max_words: int = TOKEN_BUFFER) -> list:
     """Keep as many recent messages as fit within the word budget."""
     kept, budget = [], max_words
@@ -209,8 +207,7 @@ def generate_summary() -> str:
     )
     return extract_text(result.content)
 
-# ── UI ────────────────────────────────────────────────────────────────────────
-
+# user interface
 st.set_page_config(page_title="TourBot", page_icon="🗺️", layout="centered")
 
 st.markdown("""
