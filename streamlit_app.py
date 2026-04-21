@@ -12,11 +12,13 @@ client: Anthropic = st.session_state.claude_client
 MODEL = "claude-opus-4-5"
 MAX_TOKENS = 1024
 TOKEN_BUFFER = 2000
-SUMMARY_AFTER = 6   # exchanges before auto-summary
+SUMMARY_AFTER = 15   # exchanges before auto-summary
 
 SYSTEM_PROMPT = """\
 You are TourBot, an expert tour organizer involved in the planning and logistic of bands 
-and artists touring schedules. 
+and artists touring schedules. The user will ask you to help plan tours around festivals, sporting events,
+and graduation ceremonies (if relevant) worldwide. Respond as a tour planner working with a band manager to build exciting, 
+efficient itineraries that hit the best events for the band's fanbase.
 
 You have access to a web_search tool. Use it freely to look up:
 - Current festival lineups, dates, and locations
