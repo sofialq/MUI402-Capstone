@@ -17,7 +17,7 @@ SUMMARY_MODEL = "claude-haiku-4-5-20251001"  # cheaper model for summaries
 MAX_TOKENS = 2000
 TOKEN_BUFFER = 2000
 SUMMARY_AFTER = 5
-SUMMARY_HISTORY_LIMIT = 10  # only send last N messages to summarizer
+SUMMARY_HISTORY_LIMIT = 6  # only send last N messages to summarizer
 
 SYSTEM_PROMPT = f"""\
 You are TourBot, an expert tour organizer involved in the planning and logistics of bands 
@@ -47,14 +47,20 @@ When building an itinerary:
   - Flag scheduling conflicts
   - Give rough travel times between stops (flight/train/drive)
 
-For every event you mention, use 2-3 sentences max per field, be concise and include:
+For every event you mention, be concise and include:
   • Event name and type (festival / sport / music)
   • Confirmed dates and city/venue
   • Why it's worth attending
 
-After {SUMMARY_AFTER} exchanges, offer a structured tour summary with all stops, dates,
-and the full travel flow. Don't return artist profile. Never exceed 800 generated tokens in a single response. "If the itinerary has more than 5 stops, 
-ALWAYS split into parts and ask before continuing. Never generate more than 5 stops in a single response."
+Rules:
+- Match events to artist genre/fanbase only
+- Order stops chronologically, minimize backtracking
+- Include travel time between stops (flight/drive/train)
+- Flag conflicts
+- 2-3 sentences per stop: event name/type, dates/venue, why it fits
+- After {SUMMARY_AFTER} exchanges, offer a structured summary
+- If >5 stops, split into parts and confirm before continuing
+- Max 1500 tokens per response; never truncate a stop mid-description
 """
 
 WEB_SEARCH_TOOL = {
@@ -131,23 +137,13 @@ def build_dynamic_context(
     must_hit: str,
     tour_length: int,
 ) -> str:
-    return textwrap.dedent(
-        f"""
-        Artist: {artist or "unknown"}
-        Genre: {artist_genre or "unknown"}
-        Fanbase: {fanbase or "unspecified"}
-        Region: {region}
-        Specific regions: {specific_regions or "none"}
-        Timeframe: {timeframe}
-        Must-hit cities/events: {must_hit or "none"}
-        Target tour length: {tour_length} stops
-
-        Routing constraints:
-        - Minimise backtracking between cities
-        - Prefer geographically efficient sequences
-        - Avoid overlapping major events in the same city unless strategically beneficial
-        - Only include festivals/events that fit the artist's genre and fanbase
-        """
+    return (
+        f"Artist: {artist or 'unknown'} | Genre: {artist_genre or 'unknown'} | "
+        f"Fanbase: {fanbase or 'unspecified'}\n"
+        f"Region: {region}{' (' + specific_regions + ')' if specific_regions else ''} | "
+        f"Timeframe: {timeframe} | Stops: {tour_length}\n"
+        f"Must-hit: {must_hit or 'none'}\n"
+        f"Routing: minimize backtracking, genre-fit only, no city overlaps unless strategic."
     ).strip()
 
 
@@ -198,7 +194,7 @@ def call_claude(user_text: str,
 
     st.session_state.history.append({
         "role": "assistant",
-        "content": response.content
+        "content": [{"type": "text", "text": reply}]
     })
     st.session_state.exchanges += 1
 
