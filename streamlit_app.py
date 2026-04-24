@@ -2,7 +2,6 @@ import streamlit as st
 from anthropic import Anthropic, RateLimitError  
 import re
 import time 
-from io import StringIO
 
 # client
 if "claude_client" not in st.session_state:
@@ -168,17 +167,8 @@ def call_claude(
     return reply
 
 
-def build_markdown_export(last_reply: str | None) -> str:
-    md = ["# Tour Itinerary\n"]
-    if last_reply:
-        md.append(last_reply)
-    return "\n".join(md).strip()
-
-
 # ui setup
 st.set_page_config(page_title="TourBot", layout="wide")
-
-col_main, col_sidebar_right = st.columns([2.5, 1.5])
 
 # sidebar
 with st.sidebar:
@@ -255,39 +245,95 @@ with st.sidebar:
         st.experimental_rerun()
 
 # main chat interface
-with col_main:
-    st.title("TourBot")
-    st.caption("Help plan tours with the fans in mind · powered by Claude + web search")
+st.title("TourBot")
+st.caption("Help plan tours with the fans in mind · powered by Claude + web search")
 
-    if not st.session_state.display:
+if not st.session_state.display:
+    with st.chat_message("assistant"):
+        st.markdown(
+            "Hi! I'm **TourBot** — your personal tour organizer for your artist's concerts.\n\n"
+            "Tell me more about your artist and what your goals are with this tour, and I can "
+            "help you plan an exciting itinerary that hits the best events for your fanbase!"
+        )
+else:
+    for msg in st.session_state.display:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["text"])
+
+chat_placeholder = (
+    "Reply to TourBot… (e.g. 'yes continue', 'swap stop 3', 'add NYC')"
+    if st.session_state.itinerary_started
+    else "Generate a tour plan first to unlock chat…"
+)
+user_input = st.chat_input(chat_placeholder)
+
+if user_input and st.session_state.itinerary_started:
+    st.session_state.display.append({"role": "user", "text": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Planning…"):
+            try:
+                reply = call_claude(
+                    user_text=user_input,
+                    artist=artist,
+                    artist_genre=artist_genre,
+                    fanbase=fanbase,
+                    region=region,
+                    specific_regions=specific_regions,
+                    timeframe=timeframe,
+                    must_hit=must_hit,
+                    tour_length=tour_length,
+                    is_itinerary="continue" in user_input.lower() or "yes" in user_input.lower(),
+                )
+                st.markdown(reply)
+            except RateLimitError:
+                st.warning("Rate limit reached. Please wait 30 seconds and try again.")
+                st.stop()
+
+    st.session_state.display.append({"role": "assistant", "text": reply})
+    st.rerun()
+
+create_clicked = st.button("Create my tour plan", type="primary")
+regen_clicked = st.button("Regenerate itinerary", disabled=st.session_state.last_prompt is None)
+
+if create_clicked or regen_clicked:
+    if not artist or not artist_genre:
         with st.chat_message("assistant"):
             st.markdown(
-                "Hi! I'm **TourBot** — your personal tour organizer for your artist's concerts.\n\n"
-                "Tell me more about your artist and what your goals are with this tour, and I can "
-                "help you plan an exciting itinerary that hits the best events for your fanbase!"
+                "To build a strong tour plan, I need at least the **artist name** and **genre**. "
+                "Fill those in on the left and click again."
             )
     else:
-        for msg in st.session_state.display:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["text"])
+        if create_clicked:
+            prompt = (
+                f"Your artist is {artist} and their music is best described as "
+                f"{artist_genre}. The target fanbase is {fanbase or 'their fans'}.\n"
+                f"The tour should focus on {region}"
+                f"{' (' + specific_regions + ')' if specific_regions else ''} during {timeframe}.\n"
+                f"Make sure to include any must-hit cities or events: {must_hit or 'none specified'}.\n"
+                f"The tour should be around {tour_length} stops long. "
+                f"Please propose a genre-appropriate, geographically efficient tour itinerary "
+                f"that balances festivals and headline shows."
+            )
+        else:
+            base_prompt = st.session_state.last_prompt or ""
+            prompt = (
+                base_prompt
+                + "\n\nPlease regenerate an alternative tour itinerary with different routing "
+                "and event choices, while still respecting genre fit, fanbase, and travel efficiency."
+            )
 
-    chat_placeholder = (
-        "Reply to TourBot… (e.g. 'yes continue', 'swap stop 3', 'add NYC')"
-        if st.session_state.itinerary_started
-        else "Generate a tour plan first to unlock chat…"
-    )
-    user_input = st.chat_input(chat_placeholder)
-
-    if user_input and st.session_state.itinerary_started:
-        st.session_state.display.append({"role": "user", "text": user_input})
+        st.session_state.display.append({"role": "user", "text": prompt})
         with st.chat_message("user"):
-            st.markdown(user_input)
+            st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            with st.spinner("Planning…"):
+            with st.spinner("Planning your tour…"):
                 try:
                     reply = call_claude(
-                        user_text=user_input,
+                        user_text=prompt,
                         artist=artist,
                         artist_genre=artist_genre,
                         fanbase=fanbase,
@@ -296,85 +342,12 @@ with col_main:
                         timeframe=timeframe,
                         must_hit=must_hit,
                         tour_length=tour_length,
-                        is_itinerary="continue" in user_input.lower() or "yes" in user_input.lower(),
+                        is_itinerary=True,
                     )
                     st.markdown(reply)
                 except RateLimitError:
-                    st.warning("Rate limit reached. Please wait 30 seconds and try again.")
+                    st.warning("Rate limit reached. Please wait 30 seconds and click Regenerate.")
                     st.stop()
 
         st.session_state.display.append({"role": "assistant", "text": reply})
-        st.rerun()
-
-    create_clicked = st.button("Create my tour plan", type="primary")
-    regen_clicked = st.button("Regenerate itinerary", disabled=st.session_state.last_prompt is None)
-
-    if create_clicked or regen_clicked:
-        if not artist or not artist_genre:
-            with st.chat_message("assistant"):
-                st.markdown(
-                    "To build a strong tour plan, I need at least the **artist name** and **genre**. "
-                    "Fill those in on the left and click again."
-                )
-        else:
-            if create_clicked:
-                prompt = (
-                    f"Your artist is {artist} and their music is best described as "
-                    f"{artist_genre}. The target fanbase is {fanbase or 'their fans'}.\n"
-                    f"The tour should focus on {region}"
-                    f"{' (' + specific_regions + ')' if specific_regions else ''} during {timeframe}.\n"
-                    f"Make sure to include any must-hit cities or events: {must_hit or 'none specified'}.\n"
-                    f"The tour should be around {tour_length} stops long. "
-                    f"Please propose a genre-appropriate, geographically efficient tour itinerary "
-                    f"that balances festivals and headline shows."
-                )
-            else:
-                base_prompt = st.session_state.last_prompt or ""
-                prompt = (
-                    base_prompt
-                    + "\n\nPlease regenerate an alternative tour itinerary with different routing "
-                    "and event choices, while still respecting genre fit, fanbase, and travel efficiency."
-                )
-
-            st.session_state.display.append({"role": "user", "text": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            with st.chat_message("assistant"):
-                with st.spinner("Planning your tour…"):
-                    try:
-                        reply = call_claude(
-                            user_text=prompt,
-                            artist=artist,
-                            artist_genre=artist_genre,
-                            fanbase=fanbase,
-                            region=region,
-                            specific_regions=specific_regions,
-                            timeframe=timeframe,
-                            must_hit=must_hit,
-                            tour_length=tour_length,
-                            is_itinerary=True,
-                        )
-                        st.markdown(reply)
-                    except RateLimitError:
-                        st.warning("Rate limit reached. Please wait 30 seconds and click Regenerate.")
-                        st.stop()
-
-            st.session_state.display.append({"role": "assistant", "text": reply})
-            st.session_state.itinerary_started = True
-
-# right panel — export only
-with col_sidebar_right:
-    st.subheader("Export")
-
-    if st.session_state.last_reply:
-        md_content = build_markdown_export(st.session_state.last_reply)
-        buffer = StringIO(md_content)
-        st.download_button(
-            label="Download tour plan (Markdown)",
-            data=buffer.getvalue(),
-            file_name="tour_plan.md",
-            mime="text/markdown",
-        )
-    else:
-        st.caption("Generate a tour plan first to enable export.")
+        st.session_state.itinerary_started = True
