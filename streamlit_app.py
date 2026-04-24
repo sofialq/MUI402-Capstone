@@ -256,7 +256,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # layout
-col_main, col_summary = st.columns([2.5, 1.5])
+col_main, col_summary = st.columns([3, 1])
 
 with col_main:
     st.title("🗺️ TourBot")
@@ -436,9 +436,7 @@ with col_main:
             st.session_state.display.append({"role": "assistant", "text": reply})
 
             def run_summary_block():
-                with st.chat_message("assistant"):
-                    with st.spinner("Generating tour summary…"):
-                        summary_text = generate_summary()
+                    summary_text = generate_summary()
                     st.session_state.summary = summary_text
                     summary_msg = f"**Tour summary so far:**\n\n{summary_text}"
                     st.markdown(summary_msg)
@@ -459,7 +457,8 @@ with col_main:
 with col_summary:
     st.subheader("Tour Summary: ")
     if st.session_state.summary:
-        st.markdown(st.session_state.summary)
+        with st.expander("Show / Hide Summary", expanded = False):
+            st.markdown(st.session_state.summary)
     else:
         st.caption("Once you've generated a tour plan, a high-level tour summary will appear here.")
 
