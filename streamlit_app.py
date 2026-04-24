@@ -62,6 +62,8 @@ if "last_prompt" not in st.session_state:
     st.session_state.last_prompt = None
 if "last_reply" not in st.session_state:
     st.session_state.last_reply = None
+if "itinerary_started" not in st.session_state:
+    st.session_state.itinerary_started = False
 
 
 # helper functions
@@ -177,18 +179,30 @@ def call_claude(
     return reply
 
 
+def extract_all_stops(display: list) -> str:
+    """Pull every STOP block from all assistant messages in display history."""
+    all_stops = []
+    for msg in display:
+        if msg["role"] == "assistant":
+            stops = re.findall(r"(## STOP \d+.*?)(?=## STOP \d+|\Z)", msg["text"], re.DOTALL)
+            all_stops.extend([s.strip() for s in stops])
+    return "\n\n---\n\n".join(all_stops) if all_stops else ""
+
+
 def generate_summary() -> str:
     recent = st.session_state.history[-SUMMARY_HISTORY_LIMIT:]
     convo = "\n".join(
         f"{m['role']}: {extract_text(m['content'])}"
         for m in recent
     )
+
     result = call_with_retry(lambda: client.messages.create(
         model=SUMMARY_MODEL,
         max_tokens=400,
         system=(
-            "Summarise the following tour-planning conversation in 4–5 sentences, "
-            "highlighting events discussed, destinations, routing logic, and any itinerary agreed."
+            "Summarise the following tour-planning conversation in 3–4 sentences, "
+            "covering routing logic, genre fit, and any key decisions made. "
+            "Do not list individual stops — those are shown separately."
         ),
         messages=[{
             "role": "user",
@@ -198,12 +212,16 @@ def generate_summary() -> str:
     return extract_text(result.content)
 
 
-def build_markdown_tour_summary(summary_text: str, last_reply: str | None) -> str:
+def build_markdown_tour_summary(summary_text: str, all_stops: str, last_reply: str | None) -> str:
     md = ["# Tour Summary\n"]
     if summary_text:
+        md.append("## Planning Notes\n")
         md.append(summary_text)
         md.append("\n")
-    if last_reply:
+    if all_stops:
+        md.append("## Full Itinerary\n")
+        md.append(all_stops)
+    elif last_reply:
         md.append("## Latest Itinerary Draft\n")
         md.append(last_reply)
     return "\n".join(md).strip()
@@ -301,7 +319,10 @@ with st.sidebar:
 
     st.divider()
     if st.button("Clear conversation"):
-        for key in ["history", "display", "exchanges", "summary", "last_prompt", "last_reply", "pending_summary"]:
+        for key in [
+            "history", "display", "exchanges", "summary",
+            "last_prompt", "last_reply", "pending_summary", "itinerary_started"
+        ]:
             if key in st.session_state:
                 del st.session_state[key]
         st.experimental_rerun()
@@ -320,42 +341,43 @@ with col_main:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["text"])
 
-    # free-text follow-up input — handles continuation, questions, edits
-    user_input = st.chat_input("Reply to TourBot… (e.g. 'yes continue', 'swap stop 3', 'add NYC')")
+    # chat input only appears after first itinerary has been generated
+    if st.session_state.itinerary_started:
+        user_input = st.chat_input("Reply to TourBot… (e.g. 'yes continue', 'swap stop 3', 'add NYC')")
 
-    if user_input:
-        st.session_state.display.append({"role": "user", "text": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
+        if user_input:
+            st.session_state.display.append({"role": "user", "text": user_input})
+            with st.chat_message("user"):
+                st.markdown(user_input)
 
-        with st.chat_message("assistant"):
-            with st.spinner("Planning…"):
-                try:
-                    reply = call_claude(
-                        user_text=user_input,
-                        artist=artist,
-                        artist_genre=artist_genre,
-                        fanbase=fanbase,
-                        region=region,
-                        specific_regions=specific_regions,
-                        timeframe=timeframe,
-                        must_hit=must_hit,
-                        tour_length=tour_length,
-                        is_itinerary="continue" in user_input.lower() or "yes" in user_input.lower(),
-                    )
-                    st.markdown(reply)
-                except RateLimitError:
-                    st.warning("Rate limit reached. Please wait 30 seconds and try again.")
-                    st.stop()
+            with st.chat_message("assistant"):
+                with st.spinner("Planning…"):
+                    try:
+                        reply = call_claude(
+                            user_text=user_input,
+                            artist=artist,
+                            artist_genre=artist_genre,
+                            fanbase=fanbase,
+                            region=region,
+                            specific_regions=specific_regions,
+                            timeframe=timeframe,
+                            must_hit=must_hit,
+                            tour_length=tour_length,
+                            is_itinerary="continue" in user_input.lower() or "yes" in user_input.lower(),
+                        )
+                        st.markdown(reply)
+                    except RateLimitError:
+                        st.warning("Rate limit reached. Please wait 30 seconds and try again.")
+                        st.stop()
 
-        st.session_state.display.append({"role": "assistant", "text": reply})
+            st.session_state.display.append({"role": "assistant", "text": reply})
 
-        if st.session_state.exchanges == 1 or (
-            st.session_state.exchanges > 0 and st.session_state.exchanges % SUMMARY_AFTER == 0
-        ):
-            st.session_state.pending_summary = True
+            if st.session_state.exchanges == 1 or (
+                st.session_state.exchanges > 0 and st.session_state.exchanges % SUMMARY_AFTER == 0
+            ):
+                st.session_state.pending_summary = True
 
-        st.rerun()
+            st.rerun()
 
     create_clicked = st.button("Create my tour plan", type="primary")
     regen_clicked = st.button("Regenerate itinerary", disabled=st.session_state.last_prompt is None)
@@ -413,6 +435,9 @@ with col_main:
 
             st.session_state.display.append({"role": "assistant", "text": reply})
 
+            # unlock chat input now that first itinerary is generated
+            st.session_state.itinerary_started = True
+
             if st.session_state.exchanges == 1 or (
                 st.session_state.exchanges > 0 and st.session_state.exchanges % SUMMARY_AFTER == 0
             ):
@@ -421,18 +446,27 @@ with col_main:
 # summary panel
 with col_summary:
     st.subheader("Tour Summary:")
+
+    all_stops = extract_all_stops(st.session_state.display)
+
+    if all_stops:
+        with st.expander("Full Itinerary — All Stops", expanded=True):
+            st.markdown(all_stops)
+
     if st.session_state.summary:
-        with st.expander("Show / Hide Summary", expanded=False):
+        with st.expander("Planning Notes", expanded=False):
             st.markdown(st.session_state.summary)
-    else:
-        st.caption("Once you've generated a tour plan, a high-level tour summary will appear here.")
+
+    if not all_stops and not st.session_state.summary:
+        st.caption("Once you've generated a tour plan, your full itinerary will appear here.")
 
     st.divider()
     st.subheader("Export")
 
-    if st.session_state.summary or st.session_state.last_reply:
+    if all_stops or st.session_state.last_reply:
         md_content = build_markdown_tour_summary(
             st.session_state.summary,
+            all_stops,
             st.session_state.last_reply,
         )
         buffer = StringIO(md_content)
