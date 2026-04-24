@@ -27,11 +27,12 @@ lineups, schedules, and artist background.
 STRICT OUTPUT FORMAT — copy this exactly for every stop, nothing else:
 
 ## STOP N — City, State
-**Type** | Date | Venue | 🚗 Xh from [prev city] by [method]
-Why: [max 20 words on genre/fanbase fit]
+**Type** | Date | Venue | 
+🚗 Xh from [prev city] by [method]
+Why: [max 30 words on genre/fanbase fit]
 
 HARD RULES:
-- "Why:" field is capped at 20 words. Count them. Cut if over.
+- "Why:" field is capped at 30 words. Count them. Cut if over.
 - No routing notes. No extra paragraphs. No blockquotes. No corrections sections.
 - Chronological order only — if a date conflict exists, silently fix the order.
 - Max 5 stops per response, then ask: "Would you like me to continue with stops 6–10?"
@@ -63,7 +64,6 @@ if "last_reply" not in st.session_state:
 
 # helper functions
 def trim_history(history: list) -> list:
-    """Keep only the last MAX_HISTORY_MESSAGES messages."""
     return history[-MAX_HISTORY_MESSAGES:]
 
 
@@ -121,11 +121,10 @@ def call_claude(
     is_itinerary: bool = False,
 ) -> str:
 
-    # append strict format reminder to every user message
     user_text_with_reminder = (
         user_text
         + "\n\n[FORMAT ENFORCEMENT: Use the exact 3-line stop format. "
-        "'Why:' field = 20 words max. No extra paragraphs, routing notes, blockquotes, "
+        "'Why:' field = 30 words max. No extra paragraphs, routing notes, blockquotes, "
         "or corrections sections. Chronological order only. Max 5 stops.]"
     )
 
@@ -165,13 +164,11 @@ def call_claude(
     reply = extract_text(response.content)
     reply = strip_citations(reply)
 
-    # store clean text only — never raw response.content
     st.session_state.history.append({
         "role": "assistant",
         "content": [{"type": "text", "text": reply}],
     })
     st.session_state.exchanges += 1
-
     st.session_state.last_prompt = user_text
     st.session_state.last_reply = reply
 
@@ -184,7 +181,6 @@ def generate_summary() -> str:
         f"{m['role']}: {extract_text(m['content'])}"
         for m in recent
     )
-
     result = call_with_retry(lambda: client.messages.create(
         model=SUMMARY_MODEL,
         max_tokens=400,
@@ -217,6 +213,7 @@ st.set_page_config(page_title="TourBot", layout="wide")
 col_main, col_summary = st.columns([2.5, 1.5])
 
 with col_main:
+    # deferred summary block
     if st.session_state.pending_summary:
         st.session_state.pending_summary = False
         time.sleep(5)
@@ -302,7 +299,7 @@ with st.sidebar:
 
     st.divider()
     if st.button("Clear conversation"):
-        for key in ["history", "display", "exchanges", "summary", "last_prompt", "last_reply"]:
+        for key in ["history", "display", "exchanges", "summary", "last_prompt", "last_reply", "pending_summary"]:
             if key in st.session_state:
                 del st.session_state[key]
         st.experimental_rerun()
@@ -317,44 +314,57 @@ with col_main:
                 "help you plan an exciting itinerary that hits the best events for your fanbase!"
             )
     else:
-        for i, msg in enumerate(st.session_state.display):
+        # display loop 
+        for msg in st.session_state.display:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["text"])
 
-                if msg["role"] == "assistant" and "Would you like" in msg["text"]:
-                    col1, col2 = st.columns(2)
-
-                    if col1.button("Yes, continue", key=f"yes_{i}"):
-                        user_reply = "Yes, continue."
-                        st.session_state.display.append({"role": "user", "text": user_reply})
-
-                        with st.chat_message("assistant"):
-                            with st.spinner("Continuing…"):
-                                reply = call_claude(
-                                    user_text=user_reply,
-                                    artist=artist,
-                                    artist_genre=artist_genre,
-                                    fanbase=fanbase,
-                                    region=region,
-                                    specific_regions=specific_regions,
-                                    timeframe=timeframe,
-                                    must_hit=must_hit,
-                                    tour_length=tour_length,
-                                    is_itinerary=True,
-                                )
+        # continue/stop buttons outside loop- only for last assistant message
+        last = st.session_state.display[-1]
+        if last["role"] == "assistant" and any(
+            phrase in last["text"] for phrase in [
+                "Would you like", "would you like", "continue with",
+                "shall I continue", "want me to continue", "Part 2",
+            ]
+        ):
+            btn_col1, btn_col2 = st.columns(2)
+            if btn_col1.button("Yes, continue", key="continue_yes"):
+                user_reply = "Yes, continue."
+                st.session_state.display.append({"role": "user", "text": user_reply})
+                st.session_state.history.append({
+                    "role": "user",
+                    "content": [{"type": "text", "text": user_reply}],
+                })
+                with st.chat_message("assistant"):
+                    with st.spinner("Continuing…"):
+                        try:
+                            reply = call_claude(
+                                user_text=user_reply,
+                                artist=artist,
+                                artist_genre=artist_genre,
+                                fanbase=fanbase,
+                                region=region,
+                                specific_regions=specific_regions,
+                                timeframe=timeframe,
+                                must_hit=must_hit,
+                                tour_length=tour_length,
+                                is_itinerary=True,
+                            )
                             st.markdown(reply)
+                        except RateLimitError:
+                            st.warning("Rate limit reached. Please wait 30 seconds and try again.")
+                            st.stop()
+                st.session_state.display.append({"role": "assistant", "text": reply})
+                st.rerun()
 
-                        st.session_state.display.append({"role": "assistant", "text": reply})
-                        st.rerun()
-
-                    if col2.button("No, stop", key=f"no_{i}"):
-                        user_reply = "No, stop."
-                        st.session_state.display.append({"role": "user", "text": user_reply})
-                        st.session_state.history.append({
-                            "role": "user",
-                            "content": [{"type": "text", "text": user_reply}],
-                        })
-                        st.rerun()
+            if btn_col2.button("No, stop", key="continue_no"):
+                user_reply = "No, stop."
+                st.session_state.display.append({"role": "user", "text": user_reply})
+                st.session_state.history.append({
+                    "role": "user",
+                    "content": [{"type": "text", "text": user_reply}],
+                })
+                st.rerun()
 
     create_clicked = st.button("Create my tour plan", type="primary")
     regen_clicked = st.button("Regenerate itinerary", disabled=st.session_state.last_prompt is None)
