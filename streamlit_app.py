@@ -13,34 +13,30 @@ client: Anthropic = st.session_state.claude_client
 # constants
 MODEL = "claude-sonnet-4-6"
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"
-MAX_TOKENS_ITINERARY = 900   # hard cap for itinerary responses
-MAX_TOKENS_CHAT = 400        # cheaper cap for short follow-ups
+MAX_TOKENS_ITINERARY = 750
+MAX_TOKENS_CHAT = 400
 SUMMARY_AFTER = 5
 SUMMARY_HISTORY_LIMIT = 6
-MAX_HISTORY_MESSAGES = 6     # keep last 3 exchanges
+MAX_HISTORY_MESSAGES = 6
 
 SYSTEM_PROMPT = f"""\
 You are TourBot, a tour logistics expert for bands and artists. Plan tours around festivals, \
 sports events, and graduation ceremonies worldwide. Use web_search for current event data, \
-lineups, schedules, and artist background. Use the current event data to avoid scheduling conflicts, such as graduations.
+lineups, schedules, and artist background.
 
-OUTPUT FORMAT — follow exactly, no deviations:
+STRICT OUTPUT FORMAT — copy this exactly for every stop, nothing else:
 
----
-## STOP N — City, State/Country
-**[Event or Show type]** | [Date] | [Venue]
-[ONE sentence: why this fits the artist's genre and fanbase.]
-🚗 From previous stop: [travel time and method]
----
+## STOP N — City, State
+**Type** | Date | Venue | 🚗 Xh from [prev city] by [method]
+Why: [max 20 words on genre/fanbase fit]
 
-Rules:
-- ONE sentence of justification per stop. No more. No venue history. No extra context.
-- Only include genre-appropriate events. Flag any scheduling conflicts.
-- Chronological order, minimize backtracking.
-- Max 5 stops per response. If the tour is longer, stop after stop 5, then ask:
-  "Would you like me to continue with stops 6–10?"
+HARD RULES:
+- "Why:" field is capped at 20 words. Count them. Cut if over.
+- No routing notes. No extra paragraphs. No blockquotes. No corrections sections.
+- Chronological order only — if a date conflict exists, silently fix the order.
+- Max 5 stops per response, then ask: "Would you like me to continue with stops 6–10?"
 - After {SUMMARY_AFTER} exchanges, offer a structured tour summary.
-- Never truncate a stop mid-description.
+- Genre-appropriate events only. Flag scheduling conflicts inline, not in separate sections.
 """
 
 WEB_SEARCH_TOOL = {
@@ -125,11 +121,12 @@ def call_claude(
     is_itinerary: bool = False,
 ) -> str:
 
-    # append brevity reminder to every user message
+    # append strict format reminder to every user message
     user_text_with_reminder = (
         user_text
-        + "\n\n[REMINDER: ONE sentence of justification per stop. No venue history. "
-        "No extra context. Max 5 stops then ask to continue.]"
+        + "\n\n[FORMAT ENFORCEMENT: Use the exact 3-line stop format. "
+        "'Why:' field = 20 words max. No extra paragraphs, routing notes, blockquotes, "
+        "or corrections sections. Chronological order only. Max 5 stops.]"
     )
 
     st.session_state.history.append({
@@ -168,7 +165,7 @@ def call_claude(
     reply = extract_text(response.content)
     reply = strip_citations(reply)
 
-    # store clean text only 
+    # store clean text only — never raw response.content
     st.session_state.history.append({
         "role": "assistant",
         "content": [{"type": "text", "text": reply}],
@@ -316,7 +313,8 @@ with col_main:
         with st.chat_message("assistant"):
             st.markdown(
                 "Hi! I'm **TourBot** — your personal tour organizer for your artist's concerts.\n\n"
-                "Tell me more about your artist and what your goals are with this tour, and I can help you plan an exciting itinerary that hits the best events for your fanbase!"
+                "Tell me more about your artist and what your goals are with this tour, and I can "
+                "help you plan an exciting itinerary that hits the best events for your fanbase!"
             )
     else:
         for i, msg in enumerate(st.session_state.display):
@@ -405,7 +403,7 @@ with col_main:
                             timeframe=timeframe,
                             must_hit=must_hit,
                             tour_length=tour_length,
-                            is_itinerary=True,   # full token budget for itinerary generation
+                            is_itinerary=True,
                         )
                         st.markdown(reply)
                     except RateLimitError:
