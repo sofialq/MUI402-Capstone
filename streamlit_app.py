@@ -14,7 +14,7 @@ client: Anthropic = st.session_state.claude_client
 # constants
 MODEL = "claude-sonnet-4-6"
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"  # cheaper model for summaries
-MAX_TOKENS = 800
+MAX_TOKENS = 1500
 TOKEN_BUFFER = 1500
 SUMMARY_AFTER = 5
 SUMMARY_HISTORY_LIMIT = 10  # only send last N messages to summarizer
