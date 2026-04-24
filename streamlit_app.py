@@ -14,7 +14,7 @@ client: Anthropic = st.session_state.claude_client
 # constants
 MODEL = "claude-opus-4-5"
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"  # cheaper model for summaries
-MAX_TOKENS = 1200
+MAX_TOKENS = 800
 TOKEN_BUFFER = 2000
 SUMMARY_AFTER = 5
 SUMMARY_HISTORY_LIMIT = 10  # only send last N messages to summarizer
@@ -54,8 +54,8 @@ For every event you mention, include:
   • Practical travel tip (nearest airport, booking lead time, etc.)
 
 After {SUMMARY_AFTER} exchanges, offer a structured tour summary with all stops, dates,
-and the full travel flow. Never exceed 1200 generated tokens in a single response. If the itinerary is long, summarize or break it into sections.
-If the itinerary exceeds 10 stops, send it in multiple parts. After sending Part 1, ask the user if they want Part 2.
+and the full travel flow. Never exceed 800 generated tokens in a single response. "If the itinerary has more than 5 stops, 
+ALWAYS split into parts and ask before continuing. Never generate more than 5 stops in a single response."
 """
 
 WEB_SEARCH_TOOL = {
@@ -327,7 +327,7 @@ with st.sidebar:
     )
 
     st.divider()
-    if st.button("🗑️ Clear conversation"):
+    if st.button("Clear conversation"):
         for key in ["history", "display", "exchanges", "summary", "last_prompt", "last_reply"]:
             if key in st.session_state:
                 del st.session_state[key]
@@ -420,18 +420,22 @@ with col_main:
 
             with st.chat_message("assistant"):
                 with st.spinner("Planning your tour…"):
-                    reply = call_claude(
-                        user_text=prompt,
-                        artist=artist,
-                        artist_genre=artist_genre,
-                        fanbase=fanbase,
-                        region=region,
-                        specific_regions=specific_regions,
-                        timeframe=timeframe,
-                        must_hit=must_hit,
-                        tour_length=tour_length,
-                    )
-                st.markdown(reply)
+                    try:
+                        reply = call_claude(
+                            user_text=prompt,
+                            artist=artist,
+                            artist_genre=artist_genre,
+                            fanbase=fanbase,
+                            region=region,
+                            specific_regions=specific_regions,
+                            timeframe=timeframe,
+                            must_hit=must_hit,
+                            tour_length=tour_length,
+                        )
+                        st.markdown(reply)
+                    except RateLimitError:
+                        st.warning("Rate limit reached mid-response. Please wait 30 seconds and click Regenerate.")
+                        st.stop()
 
             st.session_state.display.append({"role": "assistant", "text": reply})
 
