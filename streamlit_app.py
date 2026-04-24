@@ -12,10 +12,10 @@ if "claude_client" not in st.session_state:
 client: Anthropic = st.session_state.claude_client
 
 # constants
-MODEL = "claude-opus-4-5"
+MODEL = "claude-sonnet-4-6"
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"  # cheaper model for summaries
 MAX_TOKENS = 800
-TOKEN_BUFFER = 2000
+TOKEN_BUFFER = 800
 SUMMARY_AFTER = 5
 SUMMARY_HISTORY_LIMIT = 10  # only send last N messages to summarizer
 
@@ -440,6 +440,7 @@ with col_main:
             st.session_state.display.append({"role": "assistant", "text": reply})
 
             def run_summary_block():
+                    time.sleep(5) # delay summary call
                     summary_text = generate_summary()
                     st.session_state.summary = summary_text
                     summary_msg = f"**Tour summary so far:**\n\n{summary_text}"
