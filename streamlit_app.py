@@ -256,7 +256,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # layout
-col_main, col_summary = st.columns([3, 1])
+col_main, col_summary = st.columns([2.5, 1.5])
 
 with col_main:
     st.title("🗺️ TourBot")
@@ -439,7 +439,6 @@ with col_main:
                     summary_text = generate_summary()
                     st.session_state.summary = summary_text
                     summary_msg = f"**Tour summary so far:**\n\n{summary_text}"
-                    st.markdown(summary_msg)
                     st.session_state.display.append({"role": "assistant", "text": summary_msg})
                     st.session_state.history = [
                         {
