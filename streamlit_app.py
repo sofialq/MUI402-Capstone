@@ -70,6 +70,8 @@ if "display" not in st.session_state:
     st.session_state.display = []
 if "exchanges" not in st.session_state:
     st.session_state.exchanges = 0
+if "pending_summary" not in st.session_state:
+    st.session_state.pending_summary = False
 if "summary" not in st.session_state:
     st.session_state.summary = ""
 if "last_prompt" not in st.session_state:
@@ -242,24 +244,30 @@ def build_markdown_tour_summary(summary_text: str, last_reply: str | None) -> st
 
 
 # ui setup
-st.set_page_config(page_title="TourBot", page_icon="🗺️", layout="wide")
-
-st.markdown("""
-<style>
-.chip-row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:1rem; }
-.chip {
-    display:inline-block; padding:4px 12px;
-    border-radius:20px; font-size:13px; cursor:pointer;
-    border:1px solid #ccc; background:#f7f7f7;
-}
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="TourBot", layout="wide")
 
 # layout
 col_main, col_summary = st.columns([2.5, 1.5])
 
 with col_main:
-    st.title("🗺️ TourBot")
+    # deferred summary- runs after main call
+    if st.session_state.pending_summary:
+        st.session_state.pending_summary = False
+        time.sleep(5) 
+        try:
+            summary_text = generate_summary()
+            st.session_state.summary = summary_text
+            st.session_state.history = [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": f"Summary so far:\n{summary_text}"}],
+                }
+            ]
+        except RateLimitError:
+            st.toast("Summary skipped — rate limit hit. Will retry next exchange.")
+        st.rerun()  # rerun once more so the summary panel updates
+        
+    st.title("TourBot")
     st.caption("Help plan tours with the fans in mind · powered by Claude + web search")
 
 # sidebar
@@ -437,25 +445,13 @@ with col_main:
                         st.warning("Rate limit reached mid-response. Please wait 30 seconds and click Regenerate.")
                         st.stop()
 
+            # summary flag
             st.session_state.display.append({"role": "assistant", "text": reply})
 
-            def run_summary_block():
-                    time.sleep(5) # delay summary call
-                    summary_text = generate_summary()
-                    st.session_state.summary = summary_text
-                    summary_msg = f"**Tour summary so far:**\n\n{summary_text}"
-                    st.session_state.display.append({"role": "assistant", "text": summary_msg})
-                    st.session_state.history = [
-                        {
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": f"Summary so far:\n{summary_text}"}],
-                        }
-                    ]
-
-            if st.session_state.exchanges == 1:
-                run_summary_block()
-            elif st.session_state.exchanges > 0 and st.session_state.exchanges % SUMMARY_AFTER == 0:
-                run_summary_block()
+            if st.session_state.exchanges == 1 or (
+                st.session_state.exchanges > 0 and st.session_state.exchanges % SUMMARY_AFTER == 0
+            ):
+                st.session_state.pending_summary = True
 
 # summary panel
 with col_summary:
