@@ -1,7 +1,8 @@
 import streamlit as st
-from anthropic import Anthropic
+from anthropic import Anthropic, RateLimitError  
 import re
 import textwrap
+import time 
 from io import StringIO
 
 # client
@@ -12,9 +13,11 @@ client: Anthropic = st.session_state.claude_client
 
 # constants
 MODEL = "claude-opus-4-5"
+SUMMARY_MODEL = "claude-haiku-4-5-20251001"  # cheaper model for summaries
 MAX_TOKENS = 1200
 TOKEN_BUFFER = 2000
-SUMMARY_AFTER = 5   # still used for later summaries, but Option B overrides first one
+SUMMARY_AFTER = 5
+SUMMARY_HISTORY_LIMIT = 10  # only send last N messages to summarizer
 
 SYSTEM_PROMPT = f"""\
 You are TourBot, an expert tour organizer involved in the planning and logistics of bands 
@@ -104,6 +107,19 @@ def strip_citations(text: str) -> str:
     return re.sub(r"</?cite[^>]*>", "", text).strip()
 
 
+# retry wrapper with exponential backoff
+def call_with_retry(fn, retries=3, base_delay=10):
+    for attempt in range(retries):
+        try:
+            return fn()
+        except RateLimitError:
+            if attempt == retries - 1:
+                raise
+            wait = base_delay * (2 ** attempt)  # 10s → 20s → 40s
+            st.toast(f"Rate limit hit — retrying in {wait}s…", icon="⏳")
+            time.sleep(wait)
+
+
 def build_dynamic_context(
     artist: str,
     artist_genre: str,
@@ -167,13 +183,14 @@ def call_claude(user_text: str,
     if st.session_state.summary:
         system += f"\n\nConversation summary so far:\n{st.session_state.summary}"
 
-    response = client.messages.create(
+    # wrap the API call with retry logic
+    response = call_with_retry(lambda: client.messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
         system=system,
         tools=[WEB_SEARCH_TOOL],
         messages=trimmed,
-    )
+    ))
 
     reply = extract_text(response.content)
     reply = strip_citations(reply)
@@ -191,12 +208,15 @@ def call_claude(user_text: str,
 
 
 def generate_summary() -> str:
+    # only send the last N messages to keep input tokens low
+    recent = st.session_state.history[-SUMMARY_HISTORY_LIMIT:]
     convo = "\n".join(
         f"{m['role']}: {extract_text(m['content'])}"
-        for m in st.session_state.history
+        for m in recent
     )
-    result = client.messages.create(
-        model=MODEL,
+
+    result = call_with_retry(lambda: client.messages.create(
+        model=SUMMARY_MODEL,
         max_tokens=400,
         system=(
             "Summarise the following tour-planning conversation in 4–5 sentences, "
@@ -206,7 +226,7 @@ def generate_summary() -> str:
             "role": "user",
             "content": [{"type": "text", "text": convo}],
         }],
-    )
+    ))
     return extract_text(result.content)
 
 
@@ -326,7 +346,6 @@ with col_main:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["text"])
 
-                # --- Respond Buttons ---
                 if msg["role"] == "assistant" and "Would you like" in msg["text"]:
                     col1, col2 = st.columns(2)
 
@@ -366,7 +385,6 @@ with col_main:
                         })
                         st.rerun()
 
-    # create tour plan
     create_clicked = st.button("Create my tour plan", type="primary")
     regen_clicked = st.button("Regenerate itinerary", disabled=st.session_state.last_prompt is None)
 
@@ -417,8 +435,7 @@ with col_main:
 
             st.session_state.display.append({"role": "assistant", "text": reply})
 
-            # --- OPTION B: IMMEDIATE SUMMARY AFTER FIRST ITINERARY ---
-            if st.session_state.exchanges == 1:
+            def run_summary_block():
                 with st.chat_message("assistant"):
                     with st.spinner("Generating tour summary…"):
                         summary_text = generate_summary()
@@ -426,8 +443,6 @@ with col_main:
                     summary_msg = f"**Tour summary so far:**\n\n{summary_text}"
                     st.markdown(summary_msg)
                     st.session_state.display.append({"role": "assistant", "text": summary_msg})
-
-                    # Reset history to summary anchor
                     st.session_state.history = [
                         {
                             "role": "assistant",
@@ -435,22 +450,10 @@ with col_main:
                         }
                     ]
 
-            # Later summaries still use SUMMARY_AFTER
+            if st.session_state.exchanges == 1:
+                run_summary_block()
             elif st.session_state.exchanges > 0 and st.session_state.exchanges % SUMMARY_AFTER == 0:
-                with st.chat_message("assistant"):
-                    with st.spinner("Generating conversation summary…"):
-                        summary_text = generate_summary()
-                    st.session_state.summary = summary_text
-                    summary_msg = f"**Tour summary so far:**\n\n{summary_text}"
-                    st.markdown(summary_msg)
-                    st.session_state.display.append({"role": "assistant", "text": summary_msg})
-
-                    st.session_state.history = [
-                        {
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": f"Summary so far:\n{summary_text}"}],
-                        }
-                    ]
+                run_summary_block()
 
 # summary panel
 with col_summary:
