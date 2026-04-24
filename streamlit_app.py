@@ -15,11 +15,9 @@ MODEL = "claude-sonnet-4-6"
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"
 MAX_TOKENS_ITINERARY = 750
 MAX_TOKENS_CHAT = 400
-SUMMARY_AFTER = 5
-SUMMARY_HISTORY_LIMIT = 6
 MAX_HISTORY_MESSAGES = 6
 
-SYSTEM_PROMPT = f"""\
+SYSTEM_PROMPT = """\
 You are TourBot, a tour logistics expert for bands and artists. Plan tours around festivals, \
 sports events, and graduation ceremonies worldwide. Use web_search for current event data, \
 lineups, schedules, and artist background.
@@ -38,7 +36,6 @@ HARD RULES:
 - No routing notes. No extra paragraphs. No blockquotes. No corrections sections.
 - Chronological order only — if a date conflict exists, silently fix the order.
 - Max 5 stops per response, then ask: "Would you like me to continue with stops 6–10?"
-- After {SUMMARY_AFTER} exchanges, offer a structured tour summary.
 - Genre-appropriate events only. Flag scheduling conflicts inline, not in separate sections.
 """
 
@@ -54,18 +51,12 @@ if "display" not in st.session_state:
     st.session_state.display = []
 if "exchanges" not in st.session_state:
     st.session_state.exchanges = 0
-if "pending_summary" not in st.session_state:
-    st.session_state.pending_summary = False
-if "summary" not in st.session_state:
-    st.session_state.summary = ""
 if "last_prompt" not in st.session_state:
     st.session_state.last_prompt = None
 if "last_reply" not in st.session_state:
     st.session_state.last_reply = None
 if "itinerary_started" not in st.session_state:
     st.session_state.itinerary_started = False
-if "stops_collected" not in st.session_state:
-    st.session_state.stops_collected = 0
 
 
 # helper functions
@@ -153,10 +144,6 @@ def call_claude(
     )
 
     system = SYSTEM_PROMPT + "\n\n" + dynamic_context
-
-    if st.session_state.summary:
-        system += f"\n\nConversation summary so far:\n{st.session_state.summary}"
-
     max_tokens = MAX_TOKENS_ITINERARY if is_itinerary else MAX_TOKENS_CHAT
 
     response = call_with_retry(lambda: client.messages.create(
@@ -182,7 +169,7 @@ def call_claude(
 
 
 def extract_all_stops(display: list) -> str:
-    """Pull every STOP block from all assistant messages, update stops_collected counter."""
+    """Pull every STOP block from all assistant messages in display history."""
     all_stops = []
     for msg in display:
         if msg["role"] == "assistant":
@@ -192,50 +179,14 @@ def extract_all_stops(display: list) -> str:
                 re.MULTILINE,
             )
             all_stops.extend([s.strip() for s in stops if s.strip()])
-    st.session_state.stops_collected = len(all_stops)
     return "\n\n---\n\n".join(all_stops) if all_stops else ""
 
 
-def maybe_trigger_summary(tour_length: int) -> None:
-    """Only trigger summary when all requested stops have been collected."""
-    if st.session_state.stops_collected >= tour_length:
-        st.session_state.pending_summary = True
-
-
-def generate_summary() -> str:
-    recent = st.session_state.history[-SUMMARY_HISTORY_LIMIT:]
-    convo = "\n".join(
-        f"{m['role']}: {extract_text(m['content'])}"
-        for m in recent
-    )
-
-    result = call_with_retry(lambda: client.messages.create(
-        model=SUMMARY_MODEL,
-        max_tokens=400,
-        system=(
-            "Summarise the following tour-planning conversation in 3–4 sentences, "
-            "covering routing logic, genre fit, and any key decisions made. "
-            "Do not list individual stops — those are shown separately."
-        ),
-        messages=[{
-            "role": "user",
-            "content": [{"type": "text", "text": convo}],
-        }],
-    ))
-    return extract_text(result.content)
-
-
-def build_markdown_tour_summary(summary_text: str, all_stops: str, last_reply: str | None) -> str:
-    md = ["# Tour Summary\n"]
-    if summary_text:
-        md.append("## Planning Notes\n")
-        md.append(summary_text)
-        md.append("\n")
+def build_markdown_export(all_stops: str, last_reply: str | None) -> str:
+    md = ["# Tour Itinerary\n"]
     if all_stops:
-        md.append("## Full Itinerary\n")
         md.append(all_stops)
     elif last_reply:
-        md.append("## Latest Itinerary Draft\n")
         md.append(last_reply)
     return "\n".join(md).strip()
 
@@ -243,28 +194,7 @@ def build_markdown_tour_summary(summary_text: str, all_stops: str, last_reply: s
 # ui setup
 st.set_page_config(page_title="TourBot", layout="wide")
 
-col_main, col_summary = st.columns([2.5, 1.5])
-
-with col_main:
-    # deferred summary block
-    if st.session_state.pending_summary:
-        st.session_state.pending_summary = False
-        time.sleep(5)
-        try:
-            summary_text = generate_summary()
-            st.session_state.summary = summary_text
-            st.session_state.history = [
-                {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": f"Summary so far:\n{summary_text}"}],
-                }
-            ]
-        except RateLimitError:
-            st.toast("Summary skipped — rate limit hit. Will retry next exchange.")
-        st.rerun()
-
-    st.title("TourBot")
-    st.caption("Help plan tours with the fans in mind · powered by Claude + web search")
+col_main, col_sidebar_right = st.columns([2.5, 1.5])
 
 # sidebar
 with st.sidebar:
@@ -333,9 +263,8 @@ with st.sidebar:
     st.divider()
     if st.button("Clear conversation"):
         for key in [
-            "history", "display", "exchanges", "summary",
-            "last_prompt", "last_reply", "pending_summary",
-            "itinerary_started", "stops_collected"
+            "history", "display", "exchanges",
+            "last_prompt", "last_reply", "itinerary_started"
         ]:
             if key in st.session_state:
                 del st.session_state[key]
@@ -343,6 +272,9 @@ with st.sidebar:
 
 # main chat interface
 with col_main:
+    st.title("TourBot")
+    st.caption("Help plan tours with the fans in mind · powered by Claude + web search")
+
     if not st.session_state.display:
         with st.chat_message("assistant"):
             st.markdown(
@@ -389,8 +321,6 @@ with col_main:
                     st.stop()
 
         st.session_state.display.append({"role": "assistant", "text": reply})
-        extract_all_stops(st.session_state.display)  # refresh stops_collected
-        maybe_trigger_summary(tour_length)
         st.rerun()
 
     create_clicked = st.button("Create my tour plan", type="primary")
@@ -449,35 +379,24 @@ with col_main:
 
             st.session_state.display.append({"role": "assistant", "text": reply})
             st.session_state.itinerary_started = True
-            extract_all_stops(st.session_state.display)  # refresh stops_collected
-            maybe_trigger_summary(tour_length)
 
-# summary panel
-with col_summary:
-    st.subheader("Tour Summary:")
+# right panel — itinerary + export 
+with col_sidebar_right:
+    st.subheader("Itinerary:")
 
     all_stops = extract_all_stops(st.session_state.display)
 
     if all_stops:
-        with st.expander("Full Itinerary — All Stops", expanded=True):
+        with st.expander("Full Itinerary — All Stops", expanded=False):
             st.markdown(all_stops)
-
-    if st.session_state.summary:
-        with st.expander("Planning Notes", expanded=False):
-            st.markdown(st.session_state.summary)
-
-    if not all_stops and not st.session_state.summary:
+    else:
         st.caption("Once you've generated a tour plan, your full itinerary will appear here.")
 
     st.divider()
     st.subheader("Export")
 
     if all_stops or st.session_state.last_reply:
-        md_content = build_markdown_tour_summary(
-            st.session_state.summary,
-            all_stops,
-            st.session_state.last_reply,
-        )
+        md_content = build_markdown_export(all_stops, st.session_state.last_reply)
         buffer = StringIO(md_content)
         st.download_button(
             label="Download tour plan (Markdown)",
