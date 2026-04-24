@@ -29,10 +29,12 @@ STRICT OUTPUT FORMAT — copy this exactly for every stop, nothing else:
 ## STOP N — City, State
 **Type** | Date | Venue | 
 🚗 Xh from [prev city] by [method]
-Why: [max 30 words on genre/fanbase fit]
+
+Why: [max 20 words on genre/fanbase fit]
+
 
 HARD RULES:
-- "Why:" field is capped at 30 words. Count them. Cut if over.
+- "Why:" field is capped at 20 words. Count them. Cut if over.
 - No routing notes. No extra paragraphs. No blockquotes. No corrections sections.
 - Chronological order only — if a date conflict exists, silently fix the order.
 - Max 5 stops per response, then ask: "Would you like me to continue with stops 6–10?"
@@ -124,7 +126,7 @@ def call_claude(
     user_text_with_reminder = (
         user_text
         + "\n\n[FORMAT ENFORCEMENT: Use the exact 3-line stop format. "
-        "'Why:' field = 30 words max. No extra paragraphs, routing notes, blockquotes, "
+        "'Why:' field = 20 words max. No extra paragraphs, routing notes, blockquotes, "
         "or corrections sections. Chronological order only. Max 5 stops.]"
     )
 
