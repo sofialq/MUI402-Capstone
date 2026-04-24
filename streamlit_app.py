@@ -64,6 +64,8 @@ if "last_reply" not in st.session_state:
     st.session_state.last_reply = None
 if "itinerary_started" not in st.session_state:
     st.session_state.itinerary_started = False
+if "stops_collected" not in st.session_state:
+    st.session_state.stops_collected = 0
 
 
 # helper functions
@@ -180,7 +182,7 @@ def call_claude(
 
 
 def extract_all_stops(display: list) -> str:
-    """Pull every STOP block from all assistant messages in display history."""
+    """Pull every STOP block from all assistant messages, update stops_collected counter."""
     all_stops = []
     for msg in display:
         if msg["role"] == "assistant":
@@ -190,7 +192,14 @@ def extract_all_stops(display: list) -> str:
                 re.MULTILINE,
             )
             all_stops.extend([s.strip() for s in stops if s.strip()])
+    st.session_state.stops_collected = len(all_stops)
     return "\n\n---\n\n".join(all_stops) if all_stops else ""
+
+
+def maybe_trigger_summary(tour_length: int) -> None:
+    """Only trigger summary when all requested stops have been collected."""
+    if st.session_state.stops_collected >= tour_length:
+        st.session_state.pending_summary = True
 
 
 def generate_summary() -> str:
@@ -325,7 +334,8 @@ with st.sidebar:
     if st.button("Clear conversation"):
         for key in [
             "history", "display", "exchanges", "summary",
-            "last_prompt", "last_reply", "pending_summary", "itinerary_started"
+            "last_prompt", "last_reply", "pending_summary",
+            "itinerary_started", "stops_collected"
         ]:
             if key in st.session_state:
                 del st.session_state[key]
@@ -345,49 +355,43 @@ with col_main:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["text"])
 
-    # chat input only appears after first itinerary has been generated
-    if st.session_state.itinerary_started:
-        # always render chat_input but use placeholder to signal state
-        chat_placeholder = (
-            "Reply to TourBot… (e.g. 'yes continue', 'swap stop 3')"
-            if st.session_state.itinerary_started
-            else "Generate a tour plan first to unlock chat…"
-        )
-        user_input = st.chat_input(chat_placeholder)
+    # always render chat_input — placeholder signals locked/unlocked state
+    chat_placeholder = (
+        "Reply to TourBot… (e.g. 'yes continue', 'swap stop 3', 'add NYC')"
+        if st.session_state.itinerary_started
+        else "Generate a tour plan first to unlock chat…"
+    )
+    user_input = st.chat_input(chat_placeholder)
 
-        if user_input and st.session_state.itinerary_started:
-            st.session_state.display.append({"role": "user", "text": user_input})
-            with st.chat_message("user"):
-                st.markdown(user_input)
+    if user_input and st.session_state.itinerary_started:
+        st.session_state.display.append({"role": "user", "text": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
 
-            with st.chat_message("assistant"):
-                with st.spinner("Planning…"):
-                    try:
-                        reply = call_claude(
-                            user_text=user_input,
-                            artist=artist,
-                            artist_genre=artist_genre,
-                            fanbase=fanbase,
-                            region=region,
-                            specific_regions=specific_regions,
-                            timeframe=timeframe,
-                            must_hit=must_hit,
-                            tour_length=tour_length,
-                            is_itinerary="continue" in user_input.lower() or "yes" in user_input.lower(),
-                        )
-                        st.markdown(reply)
-                    except RateLimitError:
-                        st.warning("Rate limit reached. Please wait 30 seconds and try again.")
-                        st.stop()
+        with st.chat_message("assistant"):
+            with st.spinner("Planning…"):
+                try:
+                    reply = call_claude(
+                        user_text=user_input,
+                        artist=artist,
+                        artist_genre=artist_genre,
+                        fanbase=fanbase,
+                        region=region,
+                        specific_regions=specific_regions,
+                        timeframe=timeframe,
+                        must_hit=must_hit,
+                        tour_length=tour_length,
+                        is_itinerary="continue" in user_input.lower() or "yes" in user_input.lower(),
+                    )
+                    st.markdown(reply)
+                except RateLimitError:
+                    st.warning("Rate limit reached. Please wait 30 seconds and try again.")
+                    st.stop()
 
-            st.session_state.display.append({"role": "assistant", "text": reply})
-
-            if st.session_state.exchanges == 1 or (
-                st.session_state.exchanges > 0 and st.session_state.exchanges % SUMMARY_AFTER == 0
-            ):
-                st.session_state.pending_summary = True
-
-            st.rerun()
+        st.session_state.display.append({"role": "assistant", "text": reply})
+        extract_all_stops(st.session_state.display)  # refresh stops_collected
+        maybe_trigger_summary(tour_length)
+        st.rerun()
 
     create_clicked = st.button("Create my tour plan", type="primary")
     regen_clicked = st.button("Regenerate itinerary", disabled=st.session_state.last_prompt is None)
@@ -444,14 +448,9 @@ with col_main:
                         st.stop()
 
             st.session_state.display.append({"role": "assistant", "text": reply})
-
-            # unlock chat input now that first itinerary is generated
             st.session_state.itinerary_started = True
-
-            if st.session_state.exchanges == 1 or (
-                st.session_state.exchanges > 0 and st.session_state.exchanges % SUMMARY_AFTER == 0
-            ):
-                st.session_state.pending_summary = True
+            extract_all_stops(st.session_state.display)  # refresh stops_collected
+            maybe_trigger_summary(tour_length)
 
 # summary panel
 with col_summary:
