@@ -316,51 +316,40 @@ with col_main:
                 "help you plan an exciting itinerary that hits the best events for your fanbase!"
             )
     else:
-        # display loop 
         for msg in st.session_state.display:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["text"])
 
-        # continue/stop buttons outside loop- only for last assistant message
-        last = st.session_state.display[-1]
-        if last["role"] == "assistant" and any(
-            phrase in last["text"] for phrase in [
-                "Would you like", "would you like", "continue with",
-                "shall I continue", "want me to continue", "Part 2",
-            ]
-        ):
-            btn_col1, btn_col2 = st.columns(2)
-            if btn_col1.button("Yes, continue", key="continue_yes"):
+        # check last assistant message for continuation prompt — outside the loop
+        last_msg = st.session_state.display[-1]
+        if last_msg["role"] == "assistant" and "continue" in last_msg["text"].lower():
+            col1, col2 = st.columns(2)
+
+            if col1.button("Yes, continue", key="continue_yes"):
                 user_reply = "Yes, continue."
                 st.session_state.display.append({"role": "user", "text": user_reply})
-                st.session_state.history.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text": user_reply}],
-                })
+
                 with st.chat_message("assistant"):
                     with st.spinner("Continuing…"):
-                        try:
-                            reply = call_claude(
-                                user_text=user_reply,
-                                artist=artist,
-                                artist_genre=artist_genre,
-                                fanbase=fanbase,
-                                region=region,
-                                specific_regions=specific_regions,
-                                timeframe=timeframe,
-                                must_hit=must_hit,
-                                tour_length=tour_length,
-                                is_itinerary=True,
-                            )
-                            st.markdown(reply)
-                        except RateLimitError:
-                            st.warning("Rate limit reached. Please wait 30 seconds and try again.")
-                            st.stop()
+                        reply = call_claude(
+                            user_text=user_reply,
+                            artist=artist,
+                            artist_genre=artist_genre,
+                            fanbase=fanbase,
+                            region=region,
+                            specific_regions=specific_regions,
+                            timeframe=timeframe,
+                            must_hit=must_hit,
+                            tour_length=tour_length,
+                            is_itinerary=True,
+                        )
+                    st.markdown(reply)
+
                 st.session_state.display.append({"role": "assistant", "text": reply})
                 st.rerun()
 
-            if btn_col2.button("No, stop", key="continue_no"):
-                user_reply = "No, stop."
+            if col2.button("No, stop here", key="continue_no"):
+                user_reply = "No, stop here."
                 st.session_state.display.append({"role": "user", "text": user_reply})
                 st.session_state.history.append({
                     "role": "user",
