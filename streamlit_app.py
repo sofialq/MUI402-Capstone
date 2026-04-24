@@ -168,25 +168,9 @@ def call_claude(
     return reply
 
 
-def extract_all_stops(display: list) -> str:
-    """Pull every STOP block from all assistant messages in display history."""
-    all_stops = []
-    for msg in display:
-        if msg["role"] == "assistant":
-            stops = re.findall(
-                r"(## STOP \d+[\s\S]*?)(?=## STOP \d+|Would you like|$)",
-                msg["text"],
-                re.MULTILINE,
-            )
-            all_stops.extend([s.strip() for s in stops if s.strip()])
-    return "\n\n---\n\n".join(all_stops) if all_stops else ""
-
-
-def build_markdown_export(all_stops: str, last_reply: str | None) -> str:
+def build_markdown_export(last_reply: str | None) -> str:
     md = ["# Tour Itinerary\n"]
-    if all_stops:
-        md.append(all_stops)
-    elif last_reply:
+    if last_reply:
         md.append(last_reply)
     return "\n".join(md).strip()
 
@@ -287,7 +271,6 @@ with col_main:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["text"])
 
-    # always render chat_input — placeholder signals locked/unlocked state
     chat_placeholder = (
         "Reply to TourBot… (e.g. 'yes continue', 'swap stop 3', 'add NYC')"
         if st.session_state.itinerary_started
@@ -380,23 +363,12 @@ with col_main:
             st.session_state.display.append({"role": "assistant", "text": reply})
             st.session_state.itinerary_started = True
 
-# right panel — itinerary + export 
+# right panel — export only
 with col_sidebar_right:
-    st.subheader("Itinerary:")
-
-    all_stops = extract_all_stops(st.session_state.display)
-
-    if all_stops:
-        with st.expander("Full Itinerary — All Stops", expanded=False):
-            st.markdown(all_stops)
-    else:
-        st.caption("Once you've generated a tour plan, your full itinerary will appear here.")
-
-    st.divider()
     st.subheader("Export")
 
-    if all_stops or st.session_state.last_reply:
-        md_content = build_markdown_export(all_stops, st.session_state.last_reply)
+    if st.session_state.last_reply:
+        md_content = build_markdown_export(st.session_state.last_reply)
         buffer = StringIO(md_content)
         st.download_button(
             label="Download tour plan (Markdown)",
