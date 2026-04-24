@@ -184,8 +184,12 @@ def extract_all_stops(display: list) -> str:
     all_stops = []
     for msg in display:
         if msg["role"] == "assistant":
-            stops = re.findall(r"(## STOP \d+.*?)(?=## STOP \d+|\Z)", msg["text"], re.DOTALL)
-            all_stops.extend([s.strip() for s in stops])
+            stops = re.findall(
+                r"(## STOP \d+[\s\S]*?)(?=## STOP \d+|Would you like|$)",
+                msg["text"],
+                re.MULTILINE,
+            )
+            all_stops.extend([s.strip() for s in stops if s.strip()])
     return "\n\n---\n\n".join(all_stops) if all_stops else ""
 
 
@@ -343,9 +347,15 @@ with col_main:
 
     # chat input only appears after first itinerary has been generated
     if st.session_state.itinerary_started:
-        user_input = st.chat_input("Reply to TourBot… (e.g. 'yes continue', 'swap stop 3', 'add NYC')")
+        # always render chat_input but use placeholder to signal state
+        chat_placeholder = (
+            "Reply to TourBot… (e.g. 'yes continue', 'swap stop 3')"
+            if st.session_state.itinerary_started
+            else "Generate a tour plan first to unlock chat…"
+        )
+        user_input = st.chat_input(chat_placeholder)
 
-        if user_input:
+        if user_input and st.session_state.itinerary_started:
             st.session_state.display.append({"role": "user", "text": user_input})
             with st.chat_message("user"):
                 st.markdown(user_input)
