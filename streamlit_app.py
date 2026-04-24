@@ -12,7 +12,7 @@ if "claude_client" not in st.session_state:
 client: Anthropic = st.session_state.claude_client
 
 # constants
-MODEL = "claude-sonnet-4-5-20250514"
+MODEL = "claude-sonnet-4-6"
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"  # cheaper model for summaries
 MAX_TOKENS = 800
 TOKEN_BUFFER = 1500
