@@ -14,8 +14,8 @@ client: Anthropic = st.session_state.claude_client
 # constants
 MODEL = "claude-sonnet-4-6"
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"  # cheaper model for summaries
-MAX_TOKENS = 1500
-TOKEN_BUFFER = 1500
+MAX_TOKENS = 2000
+TOKEN_BUFFER = 2000
 SUMMARY_AFTER = 5
 SUMMARY_HISTORY_LIMIT = 10  # only send last N messages to summarizer
 
@@ -53,7 +53,7 @@ For every event you mention, use 2-3 sentences max per field, be concise and inc
   • Why it's worth attending
 
 After {SUMMARY_AFTER} exchanges, offer a structured tour summary with all stops, dates,
-and the full travel flow. Never exceed 800 generated tokens in a single response. "If the itinerary has more than 5 stops, 
+and the full travel flow. Don't return artist profile. Never exceed 800 generated tokens in a single response. "If the itinerary has more than 5 stops, 
 ALWAYS split into parts and ask before continuing. Never generate more than 5 stops in a single response."
 """
 
