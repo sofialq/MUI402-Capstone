@@ -12,10 +12,10 @@ if "claude_client" not in st.session_state:
 client: Anthropic = st.session_state.claude_client
 
 # constants
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-4-5-20250514"
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"  # cheaper model for summaries
 MAX_TOKENS = 800
-TOKEN_BUFFER = 800
+TOKEN_BUFFER = 1500
 SUMMARY_AFTER = 5
 SUMMARY_HISTORY_LIMIT = 10  # only send last N messages to summarizer
 
@@ -47,11 +47,10 @@ When building an itinerary:
   - Flag scheduling conflicts
   - Give rough travel times between stops (flight/train/drive)
 
-For every event you mention, include:
+For every event you mention, use 2-3 sentences max per field, be concise and include:
   • Event name and type (festival / sport / music)
   • Confirmed dates and city/venue
   • Why it's worth attending
-  • Practical travel tip (nearest airport, booking lead time, etc.)
 
 After {SUMMARY_AFTER} exchanges, offer a structured tour summary with all stops, dates,
 and the full travel flow. Never exceed 800 generated tokens in a single response. "If the itinerary has more than 5 stops, 
@@ -86,7 +85,7 @@ def token_trimmed_history(history: list, max_words: int = TOKEN_BUFFER) -> list:
     for msg in reversed(history):
         content = msg["content"]
         words = len(str(content))
-        if budget - words < 0:
+        if budget - words < 0 and kept:
             break
         kept.insert(0, msg)
         budget -= words
@@ -266,7 +265,7 @@ with col_main:
         except RateLimitError:
             st.toast("Summary skipped — rate limit hit. Will retry next exchange.")
         st.rerun()  # rerun once more so the summary panel updates
-        
+
     st.title("TourBot")
     st.caption("Help plan tours with the fans in mind · powered by Claude + web search")
 
