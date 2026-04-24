@@ -1,7 +1,6 @@
 import streamlit as st
 from anthropic import Anthropic, RateLimitError  
 import re
-import textwrap
 import time 
 from io import StringIO
 
@@ -13,54 +12,35 @@ client: Anthropic = st.session_state.claude_client
 
 # constants
 MODEL = "claude-sonnet-4-6"
-SUMMARY_MODEL = "claude-haiku-4-5-20251001"  # cheaper model for summaries
-MAX_TOKENS = 2000
-TOKEN_BUFFER = 2000
+SUMMARY_MODEL = "claude-haiku-4-5-20251001"
+MAX_TOKENS_ITINERARY = 900   # hard cap for itinerary responses
+MAX_TOKENS_CHAT = 400        # cheaper cap for short follow-ups
 SUMMARY_AFTER = 5
-SUMMARY_HISTORY_LIMIT = 6  # only send last N messages to summarizer
+SUMMARY_HISTORY_LIMIT = 6
+MAX_HISTORY_MESSAGES = 6     # keep last 3 exchanges
 
 SYSTEM_PROMPT = f"""\
-You are TourBot, an expert tour organizer involved in the planning and logistics of bands 
-and artists' touring schedules. The user will ask you to help plan tours around festivals, sporting events,
-and graduation ceremonies (if relevant) worldwide. Respond as a tour planner working with a band manager to build exciting, 
-efficient itineraries that hit the best events for the band's fanbase.
+You are TourBot, a tour logistics expert for bands and artists. Plan tours around festivals, \
+sports events, and graduation ceremonies worldwide. Use web_search for current event data, \
+lineups, schedules, and artist background. Use the current event data to avoid scheduling conflicts, such as graduations.
 
-Use the web_search tool to find up-to-date information on events, lineups, and schedules, as well as more information on the artist's background.
+OUTPUT FORMAT — follow exactly, no deviations:
 
-You have access to a web_search tool. Look up the listed information and use it to avoid dates in these cities if there are overlapping events:
-- The artist, their genre, and fanbase
-- Current festival lineups, dates, and locations
-- Sporting event schedules, venues, and location details
-- Tour routing between multiple events
-- Graduation dates for surrounding cities, if band has a college-based fanbase; avoid these dates
-
-When choosing cities, consider where the artist's fanbase is strongest and where they have the most demand. Also consider if travel
-is possible for fans whose cities aren't hosting an event, but are nearby a city that is.
-
-Do not send the artist to a festival or event that doesn't fit their genre or fanbase. 
-Prioritise events that are a strong match, and clearly flag any scheduling conflicts or logistical issues with proposed itineraries.
-
-When building an itinerary:
-  - Order events chronologically
-  - Suggest a logical routing to minimise travel and avoid backtracking
-  - Prefer routes with reasonable travel times between stops
-  - Flag scheduling conflicts
-  - Give rough travel times between stops (flight/train/drive)
-
-For every event you mention, be concise and include:
-  • Event name and type (festival / sport / music)
-  • Confirmed dates and city/venue
-  • Why it's worth attending
+---
+## STOP N — City, State/Country
+**[Event or Show type]** | [Date] | [Venue]
+[ONE sentence: why this fits the artist's genre and fanbase.]
+🚗 From previous stop: [travel time and method]
+---
 
 Rules:
-- Match events to artist genre/fanbase only
-- Order stops chronologically, minimize backtracking
-- Include travel time between stops (flight/drive/train)
-- Flag conflicts
-- 2-3 sentences per stop: event name/type, dates/venue, why it fits
-- After {SUMMARY_AFTER} exchanges, offer a structured summary
-- If >5 stops, split into parts and confirm before continuing
-- Max 1500 tokens per response; never truncate a stop mid-description
+- ONE sentence of justification per stop. No more. No venue history. No extra context.
+- Only include genre-appropriate events. Flag any scheduling conflicts.
+- Chronological order, minimize backtracking.
+- Max 5 stops per response. If the tour is longer, stop after stop 5, then ask:
+  "Would you like me to continue with stops 6–10?"
+- After {SUMMARY_AFTER} exchanges, offer a structured tour summary.
+- Never truncate a stop mid-description.
 """
 
 WEB_SEARCH_TOOL = {
@@ -86,16 +66,9 @@ if "last_reply" not in st.session_state:
 
 
 # helper functions
-def token_trimmed_history(history: list, max_words: int = TOKEN_BUFFER) -> list:
-    kept, budget = [], max_words
-    for msg in reversed(history):
-        content = msg["content"]
-        words = len(str(content))
-        if budget - words < 0 and kept:
-            break
-        kept.insert(0, msg)
-        budget -= words
-    return kept
+def trim_history(history: list) -> list:
+    """Keep only the last MAX_HISTORY_MESSAGES messages."""
+    return history[-MAX_HISTORY_MESSAGES:]
 
 
 def extract_text(content) -> str:
@@ -114,7 +87,6 @@ def strip_citations(text: str) -> str:
     return re.sub(r"</?cite[^>]*>", "", text).strip()
 
 
-# retry wrapper with exponential backoff
 def call_with_retry(fn, retries=3, base_delay=10):
     for attempt in range(retries):
         try:
@@ -122,20 +94,13 @@ def call_with_retry(fn, retries=3, base_delay=10):
         except RateLimitError:
             if attempt == retries - 1:
                 raise
-            wait = base_delay * (2 ** attempt)  # 10s → 20s → 40s
+            wait = base_delay * (2 ** attempt)
             st.toast(f"Rate limit hit — retrying in {wait}s…", icon="⏳")
             time.sleep(wait)
 
 
 def build_dynamic_context(
-    artist: str,
-    artist_genre: str,
-    fanbase: str,
-    region: str,
-    specific_regions: str,
-    timeframe: str,
-    must_hit: str,
-    tour_length: int,
+    artist, artist_genre, fanbase, region, specific_regions, timeframe, must_hit, tour_length
 ) -> str:
     return (
         f"Artist: {artist or 'unknown'} | Genre: {artist_genre or 'unknown'} | "
@@ -147,22 +112,32 @@ def build_dynamic_context(
     ).strip()
 
 
-def call_claude(user_text: str,
-                artist: str,
-                artist_genre: str,
-                fanbase: str,
-                region: str,
-                specific_regions: str,
-                timeframe: str,
-                must_hit: str,
-                tour_length: int) -> str:
+def call_claude(
+    user_text: str,
+    artist: str,
+    artist_genre: str,
+    fanbase: str,
+    region: str,
+    specific_regions: str,
+    timeframe: str,
+    must_hit: str,
+    tour_length: int,
+    is_itinerary: bool = False,
+) -> str:
+
+    # append brevity reminder to every user message
+    user_text_with_reminder = (
+        user_text
+        + "\n\n[REMINDER: ONE sentence of justification per stop. No venue history. "
+        "No extra context. Max 5 stops then ask to continue.]"
+    )
 
     st.session_state.history.append({
         "role": "user",
-        "content": [{"type": "text", "text": user_text}],
+        "content": [{"type": "text", "text": user_text_with_reminder}],
     })
 
-    trimmed = token_trimmed_history(st.session_state.history)
+    trimmed = trim_history(st.session_state.history)
 
     dynamic_context = build_dynamic_context(
         artist=artist,
@@ -180,10 +155,11 @@ def call_claude(user_text: str,
     if st.session_state.summary:
         system += f"\n\nConversation summary so far:\n{st.session_state.summary}"
 
-    # wrap the API call with retry logic
+    max_tokens = MAX_TOKENS_ITINERARY if is_itinerary else MAX_TOKENS_CHAT
+
     response = call_with_retry(lambda: client.messages.create(
         model=MODEL,
-        max_tokens=MAX_TOKENS,
+        max_tokens=max_tokens,
         system=system,
         tools=[WEB_SEARCH_TOOL],
         messages=trimmed,
@@ -192,9 +168,10 @@ def call_claude(user_text: str,
     reply = extract_text(response.content)
     reply = strip_citations(reply)
 
+    # store clean text only 
     st.session_state.history.append({
         "role": "assistant",
-        "content": [{"type": "text", "text": reply}]
+        "content": [{"type": "text", "text": reply}],
     })
     st.session_state.exchanges += 1
 
@@ -205,7 +182,6 @@ def call_claude(user_text: str,
 
 
 def generate_summary() -> str:
-    # only send the last N messages to keep input tokens low
     recent = st.session_state.history[-SUMMARY_HISTORY_LIMIT:]
     convo = "\n".join(
         f"{m['role']}: {extract_text(m['content'])}"
@@ -241,14 +217,12 @@ def build_markdown_tour_summary(summary_text: str, last_reply: str | None) -> st
 # ui setup
 st.set_page_config(page_title="TourBot", layout="wide")
 
-# layout
 col_main, col_summary = st.columns([2.5, 1.5])
 
 with col_main:
-    # deferred summary- runs after main call
     if st.session_state.pending_summary:
         st.session_state.pending_summary = False
-        time.sleep(5) 
+        time.sleep(5)
         try:
             summary_text = generate_summary()
             st.session_state.summary = summary_text
@@ -260,7 +234,7 @@ with col_main:
             ]
         except RateLimitError:
             st.toast("Summary skipped — rate limit hit. Will retry next exchange.")
-        st.rerun()  # rerun once more so the summary panel updates
+        st.rerun()
 
     st.title("TourBot")
     st.caption("Help plan tours with the fans in mind · powered by Claude + web search")
@@ -354,12 +328,7 @@ with col_main:
 
                     if col1.button("Yes, continue", key=f"yes_{i}"):
                         user_reply = "Yes, continue."
-
                         st.session_state.display.append({"role": "user", "text": user_reply})
-                        st.session_state.history.append({
-                            "role": "user",
-                            "content": [{"type": "text", "text": user_reply}],
-                        })
 
                         with st.chat_message("assistant"):
                             with st.spinner("Continuing…"):
@@ -373,6 +342,7 @@ with col_main:
                                     timeframe=timeframe,
                                     must_hit=must_hit,
                                     tour_length=tour_length,
+                                    is_itinerary=True,
                                 )
                             st.markdown(reply)
 
@@ -407,14 +377,15 @@ with col_main:
                     f"{' (' + specific_regions + ')' if specific_regions else ''} during {timeframe}.\n"
                     f"Make sure to include any must-hit cities or events: {must_hit or 'none specified'}.\n"
                     f"The tour should be around {tour_length} stops long. "
-                    f"Please propose a genre-appropriate, geographically efficient tour itinerary that balances festivals and headline shows."
+                    f"Please propose a genre-appropriate, geographically efficient tour itinerary "
+                    f"that balances festivals and headline shows."
                 )
             else:
                 base_prompt = st.session_state.last_prompt or ""
                 prompt = (
                     base_prompt
-                    + "\n\nPlease regenerate an alternative tour itinerary with different routing and event choices, "
-                      "while still respecting genre fit, fanbase, and travel efficiency."
+                    + "\n\nPlease regenerate an alternative tour itinerary with different routing "
+                    "and event choices, while still respecting genre fit, fanbase, and travel efficiency."
                 )
 
             st.session_state.display.append({"role": "user", "text": prompt})
@@ -434,13 +405,13 @@ with col_main:
                             timeframe=timeframe,
                             must_hit=must_hit,
                             tour_length=tour_length,
+                            is_itinerary=True,   # full token budget for itinerary generation
                         )
                         st.markdown(reply)
                     except RateLimitError:
-                        st.warning("Rate limit reached mid-response. Please wait 30 seconds and click Regenerate.")
+                        st.warning("Rate limit reached. Please wait 30 seconds and click Regenerate.")
                         st.stop()
 
-            # summary flag
             st.session_state.display.append({"role": "assistant", "text": reply})
 
             if st.session_state.exchanges == 1 or (
@@ -450,9 +421,9 @@ with col_main:
 
 # summary panel
 with col_summary:
-    st.subheader("Tour Summary: ")
+    st.subheader("Tour Summary:")
     if st.session_state.summary:
-        with st.expander("Show / Hide Summary", expanded = False):
+        with st.expander("Show / Hide Summary", expanded=False):
             st.markdown(st.session_state.summary)
     else:
         st.caption("Once you've generated a tour plan, a high-level tour summary will appear here.")
@@ -474,4 +445,3 @@ with col_summary:
         )
     else:
         st.caption("Generate a tour plan first to enable export.")
-
