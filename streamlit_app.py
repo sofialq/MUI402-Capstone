@@ -242,7 +242,7 @@ with st.sidebar:
         ]:
             if key in st.session_state:
                 del st.session_state[key]
-        st.experimental_rerun()
+        st.rerun()
 
 # main chat interface
 st.title("TourBot")
