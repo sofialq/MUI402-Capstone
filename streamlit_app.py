@@ -320,42 +320,42 @@ with col_main:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["text"])
 
-        # check last assistant message for continuation prompt — outside the loop
-        last_msg = st.session_state.display[-1]
-        if last_msg["role"] == "assistant" and "continue" in last_msg["text"].lower():
-            col1, col2 = st.columns(2)
+    # free-text follow-up input — handles continuation, questions, edits
+    user_input = st.chat_input("Reply to TourBot… (e.g. 'yes continue', 'swap stop 3', 'add NYC')")
 
-            if col1.button("Yes, continue", key="continue_yes"):
-                user_reply = "Yes, continue."
-                st.session_state.display.append({"role": "user", "text": user_reply})
+    if user_input:
+        st.session_state.display.append({"role": "user", "text": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
 
-                with st.chat_message("assistant"):
-                    with st.spinner("Continuing…"):
-                        reply = call_claude(
-                            user_text=user_reply,
-                            artist=artist,
-                            artist_genre=artist_genre,
-                            fanbase=fanbase,
-                            region=region,
-                            specific_regions=specific_regions,
-                            timeframe=timeframe,
-                            must_hit=must_hit,
-                            tour_length=tour_length,
-                            is_itinerary=True,
-                        )
+        with st.chat_message("assistant"):
+            with st.spinner("Planning…"):
+                try:
+                    reply = call_claude(
+                        user_text=user_input,
+                        artist=artist,
+                        artist_genre=artist_genre,
+                        fanbase=fanbase,
+                        region=region,
+                        specific_regions=specific_regions,
+                        timeframe=timeframe,
+                        must_hit=must_hit,
+                        tour_length=tour_length,
+                        is_itinerary="continue" in user_input.lower() or "yes" in user_input.lower(),
+                    )
                     st.markdown(reply)
+                except RateLimitError:
+                    st.warning("Rate limit reached. Please wait 30 seconds and try again.")
+                    st.stop()
 
-                st.session_state.display.append({"role": "assistant", "text": reply})
-                st.rerun()
+        st.session_state.display.append({"role": "assistant", "text": reply})
 
-            if col2.button("No, stop here", key="continue_no"):
-                user_reply = "No, stop here."
-                st.session_state.display.append({"role": "user", "text": user_reply})
-                st.session_state.history.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text": user_reply}],
-                })
-                st.rerun()
+        if st.session_state.exchanges == 1 or (
+            st.session_state.exchanges > 0 and st.session_state.exchanges % SUMMARY_AFTER == 0
+        ):
+            st.session_state.pending_summary = True
+
+        st.rerun()
 
     create_clicked = st.button("Create my tour plan", type="primary")
     regen_clicked = st.button("Regenerate itinerary", disabled=st.session_state.last_prompt is None)
