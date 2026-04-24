@@ -12,9 +12,9 @@ client: Anthropic = st.session_state.claude_client
 
 # constants
 MODEL = "claude-opus-4-5"
-MAX_TOKENS = 4096
+MAX_TOKENS = 1200
 TOKEN_BUFFER = 2000
-SUMMARY_AFTER = 15   # exchanges before auto-summary
+SUMMARY_AFTER = 5   # still used for later summaries, but Option B overrides first one
 
 SYSTEM_PROMPT = f"""\
 You are TourBot, an expert tour organizer involved in the planning and logistics of bands 
@@ -51,7 +51,8 @@ For every event you mention, include:
   • Practical travel tip (nearest airport, booking lead time, etc.)
 
 After {SUMMARY_AFTER} exchanges, offer a structured tour summary with all stops, dates,
-and the full travel flow.
+and the full travel flow. Never exceed 1200 generated tokens in a single response. If the itinerary is long, summarize or break it into sections.
+If the itinerary exceeds 10 stops, send it in multiple parts. After sending Part 1, ask the user if they want Part 2.
 """
 
 WEB_SEARCH_TOOL = {
@@ -59,11 +60,11 @@ WEB_SEARCH_TOOL = {
     "name": "web_search",
 }
 
-# inirialize session state
+# initialize session state
 if "history" not in st.session_state:
-    st.session_state.history = []          # list[dict] – raw API messages
+    st.session_state.history = []
 if "display" not in st.session_state:
-    st.session_state.display = []          # list[dict] – {role, text}
+    st.session_state.display = []
 if "exchanges" not in st.session_state:
     st.session_state.exchanges = 0
 if "summary" not in st.session_state:
@@ -73,9 +74,9 @@ if "last_prompt" not in st.session_state:
 if "last_reply" not in st.session_state:
     st.session_state.last_reply = None
 
+
 # helper functions
 def token_trimmed_history(history: list, max_words: int = TOKEN_BUFFER) -> list:
-    """Keep as many recent messages as fit within the word budget."""
     kept, budget = [], max_words
     for msg in reversed(history):
         content = msg["content"]
@@ -88,7 +89,6 @@ def token_trimmed_history(history: list, max_words: int = TOKEN_BUFFER) -> list:
 
 
 def extract_text(content) -> str:
-    """Pull plain text out of a Claude content block (list or string)."""
     if isinstance(content, str):
         return content
     parts = []
@@ -101,7 +101,6 @@ def extract_text(content) -> str:
 
 
 def strip_citations(text: str) -> str:
-    """Remove <cite> tags while keeping inner text."""
     return re.sub(r"</?cite[^>]*>", "", text).strip()
 
 
@@ -144,9 +143,7 @@ def call_claude(user_text: str,
                 timeframe: str,
                 must_hit: str,
                 tour_length: int) -> str:
-    """Send the conversation to Claude (with web search) and return the reply."""
 
-    # add user message
     st.session_state.history.append({
         "role": "user",
         "content": [{"type": "text", "text": user_text}],
@@ -154,7 +151,6 @@ def call_claude(user_text: str,
 
     trimmed = token_trimmed_history(st.session_state.history)
 
-    # dynamic system prompt with tour context
     dynamic_context = build_dynamic_context(
         artist=artist,
         artist_genre=artist_genre,
@@ -215,7 +211,6 @@ def generate_summary() -> str:
 
 
 def build_markdown_tour_summary(summary_text: str, last_reply: str | None) -> str:
-    """Create a markdown export of the tour summary + latest itinerary."""
     md = ["# Tour Summary\n"]
     if summary_text:
         md.append(summary_text)
@@ -240,14 +235,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# layout: main chat + right summary panel
+# layout
 col_main, col_summary = st.columns([2.5, 1.5])
 
 with col_main:
     st.title("🗺️ TourBot")
     st.caption("Help plan tours with the fans in mind · powered by Claude + web search")
 
-# sidebar inputs
+# sidebar
 with st.sidebar:
     st.title("Tour Detail")
     st.caption("Fill in these details to guide your tour routing.")
@@ -327,9 +322,49 @@ with col_main:
                 "Tell me more about your artist and what your goals are with this tour, and I can help you plan an exciting itinerary that hits the best events for your fanbase!"
             )
     else:
-        for msg in st.session_state.display:
+        for i, msg in enumerate(st.session_state.display):
             with st.chat_message(msg["role"]):
                 st.markdown(msg["text"])
+
+                # --- Respond Buttons ---
+                if msg["role"] == "assistant" and "Would you like" in msg["text"]:
+                    col1, col2 = st.columns(2)
+
+                    if col1.button("Yes, continue", key=f"yes_{i}"):
+                        user_reply = "Yes, continue."
+
+                        st.session_state.display.append({"role": "user", "text": user_reply})
+                        st.session_state.history.append({
+                            "role": "user",
+                            "content": [{"type": "text", "text": user_reply}],
+                        })
+
+                        with st.chat_message("assistant"):
+                            with st.spinner("Continuing…"):
+                                reply = call_claude(
+                                    user_text=user_reply,
+                                    artist=artist,
+                                    artist_genre=artist_genre,
+                                    fanbase=fanbase,
+                                    region=region,
+                                    specific_regions=specific_regions,
+                                    timeframe=timeframe,
+                                    must_hit=must_hit,
+                                    tour_length=tour_length,
+                                )
+                            st.markdown(reply)
+
+                        st.session_state.display.append({"role": "assistant", "text": reply})
+                        st.rerun()
+
+                    if col2.button("No, stop", key=f"no_{i}"):
+                        user_reply = "No, stop."
+                        st.session_state.display.append({"role": "user", "text": user_reply})
+                        st.session_state.history.append({
+                            "role": "user",
+                            "content": [{"type": "text", "text": user_reply}],
+                        })
+                        st.rerun()
 
     # create tour plan
     create_clicked = st.button("Create my tour plan", type="primary")
@@ -354,7 +389,6 @@ with col_main:
                     f"Please propose a genre-appropriate, geographically efficient tour itinerary that balances festivals and headline shows."
                 )
             else:
-                # regenerate using same context but explicit instruction
                 base_prompt = st.session_state.last_prompt or ""
                 prompt = (
                     base_prompt
@@ -383,8 +417,26 @@ with col_main:
 
             st.session_state.display.append({"role": "assistant", "text": reply})
 
-            # auto-summary
-            if st.session_state.exchanges > 0 and st.session_state.exchanges % SUMMARY_AFTER == 0:
+            # --- OPTION B: IMMEDIATE SUMMARY AFTER FIRST ITINERARY ---
+            if st.session_state.exchanges == 1:
+                with st.chat_message("assistant"):
+                    with st.spinner("Generating tour summary…"):
+                        summary_text = generate_summary()
+                    st.session_state.summary = summary_text
+                    summary_msg = f"**Tour summary so far:**\n\n{summary_text}"
+                    st.markdown(summary_msg)
+                    st.session_state.display.append({"role": "assistant", "text": summary_msg})
+
+                    # Reset history to summary anchor
+                    st.session_state.history = [
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": f"Summary so far:\n{summary_text}"}],
+                        }
+                    ]
+
+            # Later summaries still use SUMMARY_AFTER
+            elif st.session_state.exchanges > 0 and st.session_state.exchanges % SUMMARY_AFTER == 0:
                 with st.chat_message("assistant"):
                     with st.spinner("Generating conversation summary…"):
                         summary_text = generate_summary()
@@ -400,13 +452,13 @@ with col_main:
                         }
                     ]
 
-# tour summary panel + export
+# summary panel
 with col_summary:
     st.subheader("Tour Summary: ")
     if st.session_state.summary:
         st.markdown(st.session_state.summary)
     else:
-        st.caption("Once you've had a few exchanges, a high-level tour summary will appear here.")
+        st.caption("Once you've generated a tour plan, a high-level tour summary will appear here.")
 
     st.divider()
     st.subheader("Export")
@@ -425,3 +477,4 @@ with col_summary:
         )
     else:
         st.caption("Generate a tour plan first to enable export.")
+
