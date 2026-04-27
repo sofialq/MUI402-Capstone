@@ -227,18 +227,7 @@ def build_markdown_tour_summary(summary_text: str, last_reply: str | None) -> st
 
 
 # ui setup
-st.set_page_config(page_title="TourBot", page_icon="🗺️", layout="wide")
-
-st.markdown("""
-<style>
-.chip-row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:1rem; }
-.chip {
-    display:inline-block; padding:4px 12px;
-    border-radius:20px; font-size:13px; cursor:pointer;
-    border:1px solid #ccc; background:#f7f7f7;
-}
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="TourBot", layout="wide")
 
 # layout: main chat + right summary panel
 col_main, col_summary = st.columns([2.5, 1.5])
@@ -312,7 +301,7 @@ with st.sidebar:
     )
 
     st.divider()
-    if st.button("🗑️ Clear conversation"):
+    if st.button("Clear conversation"):
         for key in ["history", "display", "exchanges", "summary", "last_prompt", "last_reply"]:
             if key in st.session_state:
                 del st.session_state[key]
